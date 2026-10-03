@@ -54,14 +54,46 @@ public class OrderService {
     private final QueueManager      queueManager;
     private final UndoManager       undoManager;
 
+    /**
+     * Optional reference to InventoryService.
+     * When set, successful stock deductions invalidate the LRU cache entry so
+     * that searchById() never returns a stale (pre-deduction) stock count.
+     * May be null when OrderService is constructed without an InventoryService
+     * reference (e.g., in unit tests that don't need cache coordination).
+     */
+    private InventoryService inventoryService;
+
     // AtomicInteger replaces plain int — thread-safe increment under concurrent order placement
     private final AtomicInteger orderIdCounter = new AtomicInteger(1);
+
+    // Max times a temporarily-failing order is put back before it is discarded
+    private static final int MAX_ORDER_RETRIES = 3;
 
     public OrderService(QueueManager queueManager) {
         ProductDAO      productDAO      = new ProductDAO();
         OrderHistoryDAO orderHistoryDAO = new OrderHistoryDAO();
         this.productRepository = productDAO;
         this.orderRepository   = orderHistoryDAO;
+        this.queueManager      = queueManager;
+        this.undoManager       = new UndoManager();
+    }
+
+    /**
+     * Wire an InventoryService so that post-commit cache invalidation is active.
+     * Called by Menu after both services are constructed.
+     */
+    public void setInventoryService(InventoryService inventoryService) {
+        this.inventoryService = inventoryService;
+    }
+
+    /**
+     * Constructor-injection overload — for unit tests that supply fake repositories.
+     */
+    public OrderService(ProductRepository productRepository,
+                        OrderRepository   orderRepository,
+                        QueueManager      queueManager) {
+        this.productRepository = productRepository;
+        this.orderRepository   = orderRepository;
         this.queueManager      = queueManager;
         this.undoManager       = new UndoManager();
     }
@@ -128,6 +160,7 @@ public class OrderService {
             boolean deducted = productRepository.deductStock(conn, order.getProductId(), order.getQuantity());
             if (!deducted) {
                 conn.rollback();
+                // Stock was genuinely insufficient — do NOT re-enqueue; discard.
                 throw new InsufficientStockException(
                     order.getProductId(), order.getQuantity(), 0);
             }
@@ -138,21 +171,32 @@ public class OrderService {
             // ── Commit: both operations succeed atomically ────────────────────
             conn.commit();
 
+            // ── Invalidate LRU cache so next searchById sees updated stock ────
+            // The conditional UPDATE changed stock in the DB; the cached entry
+            // now holds a stale count. Evicting it forces the next read to hit DB.
+            if (inventoryService != null) {
+                inventoryService.invalidateProductCache(order.getProductId());
+            }
+
             System.out.println("  [COMMIT] Order #" + order.getOrderId()
                 + " processed for " + order.getCustomerName()
                 + " | Product #" + order.getProductId()
                 + " | Qty: " + order.getQuantity());
 
         } catch (InsufficientStockException | ProductNotFoundException e) {
+            // Business-logic failures — permanent; do NOT re-enqueue the order.
             safeRollback(conn);
             throw e;  // re-throw for Menu to catch and display
 
         } catch (TransactionExecutionException e) {
+            // Transient DB failure — roll back and put the order back in queue.
             safeRollback(conn);
+            requeueIfRetriable(order);
             throw e;
 
         } catch (SQLException e) {
             safeRollback(conn);
+            requeueIfRetriable(order);
             throw new TransactionExecutionException(
                 "Transaction failed for order #" + order.getOrderId(), e);
 
@@ -212,6 +256,28 @@ public class OrderService {
                 conn.rollback();
                 System.err.println("  [ROLLBACK] Transaction rolled back.");
             } catch (SQLException ignored) {}
+        }
+    }
+
+    /**
+     * Re-enqueue a failed order if it has retry budget remaining.
+     *
+     * This prevents silent order loss on transient DB errors (e.g. lock timeout,
+     * network blip). Business-logic failures (insufficient stock, unknown product)
+     * must NOT call this — those orders are discarded intentionally.
+     *
+     * Retry count is tracked on the Order itself. After MAX_ORDER_RETRIES attempts
+     * the order is dropped and a warning is printed.
+     */
+    private void requeueIfRetriable(Order order) {
+        int retries = order.incrementRetries();
+        if (retries <= MAX_ORDER_RETRIES) {
+            queueManager.addOrder(order);
+            System.err.println("  [REQUEUE] Order #" + order.getOrderId()
+                + " re-enqueued (attempt " + retries + "/" + MAX_ORDER_RETRIES + ")");
+        } else {
+            System.err.println("  [DROP] Order #" + order.getOrderId()
+                + " exceeded max retries (" + MAX_ORDER_RETRIES + ") — discarded.");
         }
     }
 }

@@ -59,7 +59,8 @@ public class ProductDAO implements ProductRepository {
         String sql = "INSERT INTO products(product_name, category, price, stock, minimum_stock) "
                    + "VALUES (?, ?, ?, ?, ?)";
         try (Connection conn = DBConnection.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+             PreparedStatement ps = conn.prepareStatement(sql,
+                     PreparedStatement.RETURN_GENERATED_KEYS)) {
 
             ps.setString(1, product.getProductName());
             ps.setString(2, product.getCategory());
@@ -70,6 +71,12 @@ public class ProductDAO implements ProductRepository {
             int rows = ps.executeUpdate();
             if (rows == 0) {
                 throw new TransactionExecutionException("INSERT into products affected 0 rows.");
+            }
+            // Populate the auto-generated primary key so callers can use it immediately
+            try (ResultSet keys = ps.getGeneratedKeys()) {
+                if (keys.next()) {
+                    product.setProductId(keys.getInt(1));
+                }
             }
         } catch (SQLException e) {
             throw new TransactionExecutionException("Failed to save product: " + e.getMessage(), e);

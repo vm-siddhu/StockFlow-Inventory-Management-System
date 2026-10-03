@@ -57,6 +57,13 @@ public class InventoryService {
         this.productRepository = new ProductDAO();
     }
 
+    /**
+     * Constructor-injection overload — for unit tests that supply a fake repository.
+     */
+    public InventoryService(ProductRepository productRepository) {
+        this.productRepository = productRepository;
+    }
+
     // ─── BST Lazy Initialization ────────────────────────────────────────────────
 
     /**
@@ -88,22 +95,13 @@ public class InventoryService {
      * Throws TransactionExecutionException on DB failure.
      */
     public void addProduct(Product product) {
-        productRepository.save(product);  // throws on failure
+        productRepository.save(product);  // throws on failure; also populates product.productId
         writeLock.lock();
         try {
-            // Re-fetch from DB to get the auto-generated product_id
-            // (only needed for BST + cache since we don't have the ID yet)
-            List<Product> all = productRepository.findAll();
-            // Find the newly added product (last with matching name+price)
-            for (int i = all.size() - 1; i >= 0; i--) {
-                Product p = all.get(i);
-                if (p.getProductName().equals(product.getProductName())
-                        && p.getPrice() == product.getPrice()) {
-                    priceIndex.insert(p);
-                    productCache.put(p.getProductId(), p);
-                    break;
-                }
-            }
+            // ProductDAO.save() now uses getGeneratedKeys to fill in product.productId,
+            // so we can insert directly without a full table re-scan.
+            priceIndex.insert(product);
+            productCache.put(product.getProductId(), product);
         } finally {
             writeLock.unlock();
         }
@@ -215,6 +213,24 @@ public class InventoryService {
             return priceIndex.searchByPriceRange(min, max);
         } finally {
             readLock.unlock();
+        }
+    }
+
+    /**
+     * Evict a single entry from the LRU cache.
+     *
+     * Called by OrderService after a successful stock-deduction commit so that
+     * the next searchById() call goes to the DB and sees the updated stock count
+     * instead of a stale cached value.
+     *
+     * Thread-safe: LRUProductCache.invalidate() is backed by a synchronizedMap.
+     */
+    public void invalidateProductCache(int productId) {
+        writeLock.lock();
+        try {
+            productCache.invalidate(productId);
+        } finally {
+            writeLock.unlock();
         }
     }
 }

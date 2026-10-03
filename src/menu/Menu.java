@@ -28,6 +28,12 @@ public class Menu {
     private final QueueManager     queueManager     = new QueueManager();
     private final OrderService     orderService     = new OrderService(queueManager);
 
+    public Menu() {
+        // Wire InventoryService into OrderService so that a successful stock
+        // deduction also evicts the LRU cache entry — prevents stale stock reads.
+        orderService.setInventoryService(inventoryService);
+    }
+
     // ─── Input Helpers ──────────────────────────────────────────────────────────
 
     private int readInt(String prompt) {

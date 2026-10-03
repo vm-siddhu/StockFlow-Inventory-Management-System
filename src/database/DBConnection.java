@@ -35,10 +35,48 @@ public class DBConnection {
         HikariConfig config = new HikariConfig();
 
         // ── JDBC settings ────────────────────────────────────────────────────
-        config.setJdbcUrl("jdbc:mysql://localhost:3306/stockflow"
-                + "?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC");
-        config.setUsername("root");
-        config.setPassword("root123");
+        // Credentials are loaded from environment variables — never hardcode
+        // passwords in source code.
+        //
+        // Set these before running the application:
+        //   DB_URL      – full JDBC URL  (default: localhost/stockflow)
+        //   DB_USER     – database user  (default: root)
+        //   DB_PASSWORD – database password  (NO default — must be set)
+        //
+        // Windows PowerShell:
+        //   $env:DB_URL      = "jdbc:mysql://localhost:3306/stockflow?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"
+        //   $env:DB_USER     = "root"
+        //   $env:DB_PASSWORD = "your_password_here"
+        //
+        // Linux / macOS:
+        //   export DB_URL="jdbc:mysql://localhost:3306/stockflow?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"
+        //   export DB_USER="root"
+        //   export DB_PASSWORD="your_password_here"
+
+        String dbUrl  = System.getenv("DB_URL");
+        String dbUser = System.getenv("DB_USER");
+        String dbPass = System.getenv("DB_PASSWORD");
+
+        if (dbUrl  == null || dbUrl.isBlank()) {
+            dbUrl = "jdbc:mysql://localhost:3306/stockflow"
+                  + "?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC";
+        }
+        if (dbUser == null || dbUser.isBlank()) {
+            dbUser = "root";
+        }
+        if (dbPass == null || dbPass.isBlank()) {
+            // No sensible default for a password — fail fast with a clear message
+            // rather than silently using a wrong or empty credential.
+            throw new ExceptionInInitializerError(
+                "[StockFlow] DB_PASSWORD environment variable is not set. "
+              + "Set it before starting the application: "
+              + "export DB_PASSWORD=<your_password>  (Linux/macOS) "
+              + "or  $env:DB_PASSWORD='<your_password>'  (PowerShell)");
+        }
+
+        config.setJdbcUrl(dbUrl);
+        config.setUsername(dbUser);
+        config.setPassword(dbPass);
         config.setDriverClassName("com.mysql.cj.jdbc.Driver");
 
         // ── Pool sizing ───────────────────────────────────────────────────────
