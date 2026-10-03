@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DBConnection.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">StockFlow Inventory Management System</a> &gt; <a href="index.source.html" class="el_package">database</a> &gt; <span class="el_source">DBConnection.java</span></div><h1>DBConnection.java</h1><pre class="source lang-java linenums">package database;
+
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
+
+import java.sql.Connection;
+import java.sql.SQLException;
+
+/**
+ * HikariCP Connection Pool — Singleton, thread-safe.
+ *
+ * Design Rationale (replacing raw DriverManager):
+ *  - DriverManager.getConnection() opens a fresh TCP socket to MySQL on every
+ *    call. Under 20 concurrent threads each making 5 SQL calls, that is 100
+ *    connection establishment handshakes — typically 20-100ms each on localhost.
+ *  - HikariCP maintains a warm pool of reusable connections. getConnection()
+ *    returns an already-open connection in sub-millisecond time.
+ *  - Pool exhaustion protection: connectionTimeout=20s means a thread waiting
+ *    for a connection will throw after 20 seconds instead of hanging forever.
+ *
+ * Isolation Level: REPEATABLE_READ (MySQL default).
+ *  - A transaction sees a consistent snapshot from its start time.
+ *  - Combined with the atomic conditional UPDATE in ProductDAO.deductStock(),
+ *    this prevents phantom reads and dirty reads during concurrent order processing.
+ *
+ * Singleton pattern: the HikariDataSource is created once at class-load time
+ * (static initializer) and reused for the JVM lifetime. A shutdown hook
+ * cleanly drains and closes all connections on JVM exit.
+ */
+public class DBConnection {
+
+    private static final HikariDataSource dataSource;
+
+    static {
+<span class="nc" id="L35">        HikariConfig config = new HikariConfig();</span>
+
+        // ── JDBC settings ────────────────────────────────────────────────────
+        // Credentials are loaded from environment variables — never hardcode
+        // passwords in source code.
+        //
+        // Set these before running the application:
+        //   DB_URL      – full JDBC URL  (default: localhost/stockflow)
+        //   DB_USER     – database user  (default: root)
+        //   DB_PASSWORD – database password  (NO default — must be set)
+        //
+        // Windows PowerShell:
+        //   $env:DB_URL      = &quot;jdbc:mysql://localhost:3306/stockflow?useSSL=false&amp;allowPublicKeyRetrieval=true&amp;serverTimezone=UTC&quot;
+        //   $env:DB_USER     = &quot;root&quot;
+        //   $env:DB_PASSWORD = &quot;your_password_here&quot;
+        //
+        // Linux / macOS:
+        //   export DB_URL=&quot;jdbc:mysql://localhost:3306/stockflow?useSSL=false&amp;allowPublicKeyRetrieval=true&amp;serverTimezone=UTC&quot;
+        //   export DB_USER=&quot;root&quot;
+        //   export DB_PASSWORD=&quot;your_password_here&quot;
+
+<span class="nc" id="L56">        String dbUrl  = System.getenv(&quot;DB_URL&quot;);</span>
+<span class="nc" id="L57">        String dbUser = System.getenv(&quot;DB_USER&quot;);</span>
+<span class="nc" id="L58">        String dbPass = System.getenv(&quot;DB_PASSWORD&quot;);</span>
+
+<span class="nc bnc" id="L60" title="All 4 branches missed.">        if (dbUrl  == null || dbUrl.isBlank()) {</span>
+<span class="nc" id="L61">            dbUrl = &quot;jdbc:mysql://localhost:3306/stockflow&quot;</span>
+                  + &quot;?useSSL=false&amp;allowPublicKeyRetrieval=true&amp;serverTimezone=UTC&quot;;
+        }
+<span class="nc bnc" id="L64" title="All 4 branches missed.">        if (dbUser == null || dbUser.isBlank()) {</span>
+<span class="nc" id="L65">            dbUser = &quot;root&quot;;</span>
+        }
+<span class="nc bnc" id="L67" title="All 4 branches missed.">        if (dbPass == null || dbPass.isBlank()) {</span>
+            // No sensible default for a password — fail fast with a clear message
+            // rather than silently using a wrong or empty credential.
+<span class="nc" id="L70">            throw new ExceptionInInitializerError(</span>
+                &quot;[StockFlow] DB_PASSWORD environment variable is not set. &quot;
+              + &quot;Set it before starting the application: &quot;
+              + &quot;export DB_PASSWORD=&lt;your_password&gt;  (Linux/macOS) &quot;
+              + &quot;or  $env:DB_PASSWORD='&lt;your_password&gt;'  (PowerShell)&quot;);
+        }
+
+<span class="nc" id="L77">        config.setJdbcUrl(dbUrl);</span>
+<span class="nc" id="L78">        config.setUsername(dbUser);</span>
+<span class="nc" id="L79">        config.setPassword(dbPass);</span>
+<span class="nc" id="L80">        config.setDriverClassName(&quot;com.mysql.cj.jdbc.Driver&quot;);</span>
+
+        // ── Pool sizing ───────────────────────────────────────────────────────
+        // maximumPoolSize=10: caps concurrent DB connections; prevents MySQL
+        // &quot;Too many connections&quot; errors under high load.
+<span class="nc" id="L85">        config.setMaximumPoolSize(10);</span>
+
+        // minimumIdle=5: keeps 5 connections pre-warmed so burst traffic does
+        // not pay connection setup latency.
+<span class="nc" id="L89">        config.setMinimumIdle(5);</span>
+
+        // ── Timeouts ──────────────────────────────────────────────────────────
+        // idleTimeout=30s: idle connections above minimumIdle are reaped after
+        // 30 seconds to free MySQL server resources.
+<span class="nc" id="L94">        config.setIdleTimeout(30_000);</span>
+
+        // connectionTimeout=20s: a thread waiting for a pooled connection will
+        // throw SQLException after 20 seconds. Prevents indefinite blocking.
+<span class="nc" id="L98">        config.setConnectionTimeout(20_000);</span>
+
+        // maxLifetime=1800s: connections are retired after 30 minutes regardless
+        // of activity. Prevents stale connections caused by MySQL wait_timeout.
+<span class="nc" id="L102">        config.setMaxLifetime(1_800_000);</span>
+
+        // ── Connection health ─────────────────────────────────────────────────
+        // keepaliveTime sends a lightweight ping every 60s to prevent MySQL
+        // from closing idle connections server-side.
+<span class="nc" id="L107">        config.setKeepaliveTime(60_000);</span>
+<span class="nc" id="L108">        config.setConnectionTestQuery(&quot;SELECT 1&quot;);</span>
+
+        // ── Pool name (visible in thread dumps / JMX) ─────────────────────────
+<span class="nc" id="L111">        config.setPoolName(&quot;StockFlow-HikariPool&quot;);</span>
+
+<span class="nc" id="L113">        dataSource = new HikariDataSource(config);</span>
+
+        // Shutdown hook: drains pool cleanly on JVM exit (Ctrl+C / System.exit)
+<span class="nc" id="L116">        Runtime.getRuntime().addShutdownHook(new Thread(() -&gt; {</span>
+<span class="nc bnc" id="L117" title="All 2 branches missed.">            if (!dataSource.isClosed()) {</span>
+<span class="nc" id="L118">                dataSource.close();</span>
+<span class="nc" id="L119">                System.out.println(&quot;[StockFlow] HikariCP pool shut down cleanly.&quot;);</span>
+            }
+<span class="nc" id="L121">        }, &quot;hikari-shutdown-hook&quot;));</span>
+<span class="nc" id="L122">    }</span>
+
+    /**
+     * Acquire a Connection from the Hikari pool.
+     *
+     * The caller is responsible for closing (returning) the connection,
+     * preferably in a try-with-resources or finally block.
+     *
+     * @throws SQLException if no connection is available within connectionTimeout.
+     */
+    public static Connection getConnection() throws SQLException {
+<span class="nc" id="L133">        return dataSource.getConnection();</span>
+    }
+
+    /**
+     * Explicit pool shutdown — call this only from integration tests or
+     * non-JVM-exit teardown paths. Normal app shutdown uses the ShutdownHook.
+     */
+    public static void shutdown() {
+<span class="nc bnc" id="L141" title="All 2 branches missed.">        if (!dataSource.isClosed()) {</span>
+<span class="nc" id="L142">            dataSource.close();</span>
+        }
+<span class="nc" id="L144">    }</span>
+
+    // Prevent instantiation — this is a pure utility class
+    private DBConnection() {}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

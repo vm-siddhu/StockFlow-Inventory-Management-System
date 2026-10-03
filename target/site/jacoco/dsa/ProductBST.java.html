@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ProductBST.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">StockFlow Inventory Management System</a> &gt; <a href="index.source.html" class="el_package">dsa</a> &gt; <span class="el_source">ProductBST.java</span></div><h1>ProductBST.java</h1><pre class="source lang-java linenums">package dsa;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import model.Product;
+
+/**
+ * Self-Balancing AVL Tree keyed on (price, productId) composite key.
+ *
+ * Complexity:
+ *  insert            O(log n)
+ *  delete            O(log n) -- navigates the composite key directly; no off-path nodes visited
+ *  searchByPriceRange O(k + log n), k = results returned
+ *
+ * Composite key rationale:
+ *  Price alone is ambiguous when products share the same price: delete would
+ *  have to search both subtrees (O(n) worst case) to find the right node.
+ *  Appending productId makes every key globally unique, so every operation
+ *  follows a single root-to-leaf path.
+ *
+ * Thread-Safety: NOT internally synchronized.
+ * InventoryService wraps all access with a ReentrantReadWriteLock.
+ */
+<span class="fc" id="L25">public class ProductBST {</span>
+
+    private static class Node {
+        Product product;
+        Node left, right;
+        int height;
+<span class="fc" id="L31">        Node(Product p) { product = p; height = 1; }</span>
+    }
+
+    private Node root;
+
+    /** Insert a product. O(log n). */
+    public void insert(Product product) {
+<span class="pc bpc" id="L38" title="1 of 2 branches missed.">        if (product == null) return;</span>
+<span class="fc" id="L39">        root = insertRec(root, product);</span>
+<span class="fc" id="L40">    }</span>
+
+    /**
+     * Delete a product by its composite key (price, productId). O(log n).
+     *
+     * Both values are required so the tree can navigate directly to the target.
+     * Callers that only hold the ID must first retrieve the product to get its
+     * price (e.g. productRepository.findById(id)).
+     */
+    public void delete(double price, int productId) {
+<span class="fc" id="L50">        root = deleteRec(root, price, productId);</span>
+<span class="fc" id="L51">    }</span>
+
+    /**
+     * Range query -- all products with price in [minPrice, maxPrice]. O(k + log n).
+     *
+     * Pruning rules:
+     *  price &amp;lt; minPrice -&gt; skip node + left subtree, recurse right only.
+     *  price &amp;gt; maxPrice -&gt; skip node + right subtree, recurse left only.
+     *  otherwise       -&gt; collect node, recurse both children.
+     */
+    public List&lt;Product&gt; searchByPriceRange(double minPrice, double maxPrice) {
+<span class="fc" id="L62">        List&lt;Product&gt; results = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L63">        rangeSearchRec(root, minPrice, maxPrice, results);</span>
+<span class="fc" id="L64">        return results;</span>
+    }
+
+<span class="pc bpc" id="L67" title="1 of 2 branches missed.">    public boolean isEmpty() { return root == null; }</span>
+
+    // -------------------------------------------------------------------------
+    // Insertion
+    // -------------------------------------------------------------------------
+
+    private Node insertRec(Node node, Product p) {
+<span class="fc bfc" id="L74" title="All 2 branches covered.">        if (node == null) return new Node(p);</span>
+<span class="fc" id="L75">        int cmp = compareKeys(p.getPrice(), p.getProductId(), node.product);</span>
+<span class="fc bfc" id="L76" title="All 2 branches covered.">        if      (cmp &lt; 0) node.left  = insertRec(node.left,  p);</span>
+<span class="pc bpc" id="L77" title="1 of 2 branches missed.">        else if (cmp &gt; 0) node.right = insertRec(node.right, p);</span>
+<span class="nc" id="L78">        else              node.product = p;  // same key -&gt; update in place</span>
+<span class="fc" id="L79">        updateHeight(node);</span>
+<span class="fc" id="L80">        return rebalance(node);</span>
+    }
+
+    // -------------------------------------------------------------------------
+    // Deletion
+    // -------------------------------------------------------------------------
+
+    private Node deleteRec(Node node, double price, int productId) {
+<span class="fc bfc" id="L88" title="All 2 branches covered.">        if (node == null) return null;</span>
+
+<span class="fc" id="L90">        int cmp = compareKeys(price, productId, node.product);</span>
+
+<span class="fc bfc" id="L92" title="All 2 branches covered.">        if (cmp &lt; 0) {</span>
+<span class="fc" id="L93">            node.left  = deleteRec(node.left,  price, productId);</span>
+<span class="fc bfc" id="L94" title="All 2 branches covered.">        } else if (cmp &gt; 0) {</span>
+<span class="fc" id="L95">            node.right = deleteRec(node.right, price, productId);</span>
+        } else {
+            // Found the node to remove
+<span class="fc bfc" id="L98" title="All 2 branches covered.">            if (node.left  == null) return node.right;</span>
+<span class="fc bfc" id="L99" title="All 2 branches covered.">            if (node.right == null) return node.left;</span>
+            // Two children: replace with in-order successor, then delete it
+<span class="fc" id="L101">            Node s = findMin(node.right);</span>
+<span class="fc" id="L102">            node.product = s.product;</span>
+<span class="fc" id="L103">            node.right   = deleteRec(node.right,</span>
+<span class="fc" id="L104">                                     s.product.getPrice(),</span>
+<span class="fc" id="L105">                                     s.product.getProductId());</span>
+        }
+<span class="fc" id="L107">        updateHeight(node);</span>
+<span class="fc" id="L108">        return rebalance(node);</span>
+    }
+
+    // -------------------------------------------------------------------------
+    // AVL Rebalancing -- four rotation cases
+    // -------------------------------------------------------------------------
+
+    private Node rebalance(Node n) {
+<span class="fc" id="L116">        int bf = balanceFactor(n);</span>
+<span class="fc bfc" id="L117" title="All 2 branches covered.">        if (bf &gt; 1) {</span>
+<span class="fc bfc" id="L118" title="All 2 branches covered.">            if (balanceFactor(n.left) &lt; 0) n.left = leftRotate(n.left);   // LR</span>
+<span class="fc" id="L119">            return rightRotate(n);</span>
+        }
+<span class="fc bfc" id="L121" title="All 2 branches covered.">        if (bf &lt; -1) {</span>
+<span class="fc bfc" id="L122" title="All 2 branches covered.">            if (balanceFactor(n.right) &gt; 0) n.right = rightRotate(n.right); // RL</span>
+<span class="fc" id="L123">            return leftRotate(n);</span>
+        }
+<span class="fc" id="L125">        return n;</span>
+    }
+
+    //     x                 y
+    //      \               / \
+    //       y    -&gt;       x   C
+    //      / \             \
+    //     B   C             B
+    private Node leftRotate(Node x) {
+<span class="fc" id="L134">        Node y = x.right, B = y.left;</span>
+<span class="fc" id="L135">        y.left = x; x.right = B;</span>
+<span class="fc" id="L136">        updateHeight(x); updateHeight(y);</span>
+<span class="fc" id="L137">        return y;</span>
+    }
+
+    //       y            x
+    //      /            / \
+    //     x    -&gt;      A   y
+    //    / \              /
+    //   A   B            B
+    private Node rightRotate(Node y) {
+<span class="fc" id="L146">        Node x = y.left, B = x.right;</span>
+<span class="fc" id="L147">        x.right = y; y.left = B;</span>
+<span class="fc" id="L148">        updateHeight(y); updateHeight(x);</span>
+<span class="fc" id="L149">        return x;</span>
+    }
+
+    // -------------------------------------------------------------------------
+    // Range search
+    // -------------------------------------------------------------------------
+
+    private void rangeSearchRec(Node n, double min, double max, List&lt;Product&gt; out) {
+<span class="fc bfc" id="L157" title="All 2 branches covered.">        if (n == null) return;</span>
+<span class="fc" id="L158">        double p = n.product.getPrice();</span>
+<span class="fc bfc" id="L159" title="All 2 branches covered.">        if      (p &lt; min) rangeSearchRec(n.right, min, max, out);</span>
+<span class="fc bfc" id="L160" title="All 2 branches covered.">        else if (p &gt; max) rangeSearchRec(n.left,  min, max, out);</span>
+        else {
+<span class="fc" id="L162">            rangeSearchRec(n.left,  min, max, out);</span>
+<span class="fc" id="L163">            out.add(n.product);</span>
+<span class="fc" id="L164">            rangeSearchRec(n.right, min, max, out);</span>
+        }
+<span class="fc" id="L166">    }</span>
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+
+    /**
+     * Compare search key (price, productId) against the key stored in nodeProduct.
+     * Returns negative / zero / positive (Comparator convention).
+     */
+    private int compareKeys(double price, int productId, Product nodeProduct) {
+<span class="fc" id="L177">        int cmp = Double.compare(price, nodeProduct.getPrice());</span>
+<span class="fc bfc" id="L178" title="All 2 branches covered.">        if (cmp != 0) return cmp;</span>
+<span class="fc" id="L179">        return Integer.compare(productId, nodeProduct.getProductId());</span>
+    }
+
+<span class="fc bfc" id="L182" title="All 2 branches covered.">    private int  height(Node n)        { return n == null ? 0 : n.height; }</span>
+<span class="fc" id="L183">    private void updateHeight(Node n)  { n.height = 1 + Math.max(height(n.left), height(n.right)); }</span>
+<span class="pc bpc" id="L184" title="1 of 2 branches missed.">    private int  balanceFactor(Node n) { return n == null ? 0 : height(n.left) - height(n.right); }</span>
+<span class="fc bfc" id="L185" title="All 2 branches covered.">    private Node findMin(Node n)       { while (n.left != null) n = n.left; return n; }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

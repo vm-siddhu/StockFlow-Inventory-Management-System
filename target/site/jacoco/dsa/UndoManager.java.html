@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>UndoManager.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">StockFlow Inventory Management System</a> &gt; <a href="index.source.html" class="el_package">dsa</a> &gt; <span class="el_source">UndoManager.java</span></div><h1>UndoManager.java</h1><pre class="source lang-java linenums">package dsa;
+
+import java.util.concurrent.LinkedBlockingDeque;
+
+import model.Order;
+
+/**
+ * Thread-safe undo action stack.
+ *
+ * Design — LinkedBlockingDeque:
+ *  - A thread-safe, optionally bounded, doubly-ended blocking deque from
+ *    java.util.concurrent. All head/tail operations are guarded by a single
+ *    ReentrantLock internally (two condition variables for head and tail).
+ *  - offerFirst() / pollFirst() are non-blocking and atomic — no explicit
+ *    synchronization needed in this class.
+ *  - Bounded capacity (MAX_UNDO_HISTORY) prevents unbounded memory growth from
+ *    unconstrained undo-stack depth.
+ *
+ * Replaces: ArrayDeque which is not thread-safe — concurrent push/pop
+ * from multiple threads can corrupt internal element array pointers.
+ */
+<span class="nc" id="L22">public class UndoManager {</span>
+
+    /** Maximum undo history depth. Old actions are silently dropped if full. */
+    private static final int MAX_UNDO_HISTORY = 1_000;
+
+    // ─── Action Inner Class ────────────────────────────────────────────────────
+
+    public static class Action {
+
+<span class="nc" id="L31">        public enum Type {</span>
+<span class="nc" id="L32">            PLACE_ORDER</span>
+        }
+
+        private final Type  type;
+        private final Order order;
+
+<span class="nc" id="L38">        public Action(Type type, Order order) {</span>
+<span class="nc" id="L39">            this.type  = type;</span>
+<span class="nc" id="L40">            this.order = order;</span>
+<span class="nc" id="L41">        }</span>
+
+<span class="nc" id="L43">        public Type  getType()  { return type; }</span>
+<span class="nc" id="L44">        public Order getOrder() { return order; }</span>
+
+        @Override
+        public String toString() {
+<span class="nc" id="L48">            return &quot;Action{type=&quot; + type + &quot;, order=&quot; + order + &quot;}&quot;;</span>
+        }
+    }
+
+    // ─── State ─────────────────────────────────────────────────────────────────
+
+    // LinkedBlockingDeque with a fixed capacity — bounded to prevent memory leaks
+<span class="nc" id="L55">    private final LinkedBlockingDeque&lt;Action&gt; stack = new LinkedBlockingDeque&lt;&gt;(MAX_UNDO_HISTORY);</span>
+
+    // ─── Stack Operations ──────────────────────────────────────────────────────
+
+    /**
+     * Push a new undo action onto the top of the stack.
+     * offerFirst() is non-blocking and atomic. If capacity is exceeded,
+     * the push silently fails (oldest actions are still recoverable until evicted).
+     */
+    public void pushAction(Action.Type type, Order order) {
+<span class="nc bnc" id="L65" title="All 2 branches missed.">        if (order == null) return;</span>
+        // offerFirst = push to head (stack top)
+<span class="nc" id="L67">        stack.offerFirst(new Action(type, order));</span>
+<span class="nc" id="L68">    }</span>
+
+    /**
+     * Pop and return the most recent action (LIFO).
+     * pollFirst() is non-blocking — returns null if the stack is empty.
+     */
+    public Action popAction() {
+<span class="nc" id="L75">        return stack.pollFirst();   // returns null if empty — no exception thrown</span>
+    }
+
+    /**
+     * Inspect the top action without removing it.
+     * peekFirst() is non-blocking and atomic.
+     */
+    public Action peekAction() {
+<span class="nc" id="L83">        return stack.peekFirst();</span>
+    }
+
+<span class="nc" id="L86">    public int     size()    { return stack.size(); }</span>
+<span class="nc" id="L87">    public boolean isEmpty() { return stack.isEmpty(); }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

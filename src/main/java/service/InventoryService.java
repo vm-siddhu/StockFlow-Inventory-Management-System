@@ -112,14 +112,15 @@ public class InventoryService {
      * Throws ProductNotFoundException if ID does not exist.
      */
     public void updateProduct(Product product) {
-        // Fetch old version to get its price (needed for BST deletion)
+        // Fetch old version to get its price (needed for AVL deletion by composite key)
         Product existing = productRepository.findById(product.getProductId()); // throws if not found
         productRepository.update(product);
 
         writeLock.lock();
         try {
-            // Remove by old price, re-insert at new price
-            priceIndex.delete(existing.getProductId());
+            // Delete using (oldPrice, productId) — the composite key that locates
+            // the node in O(log n). Then re-insert at the new price.
+            priceIndex.delete(existing.getPrice(), existing.getProductId());
             priceIndex.insert(product);
             productCache.put(product.getProductId(), product);
         } finally {
@@ -132,10 +133,13 @@ public class InventoryService {
      * Throws ProductNotFoundException if the product does not exist.
      */
     public void deleteProduct(int productId) {
-        productRepository.delete(productId);  // throws ProductNotFoundException if missing
+        // Fetch the product first to get its price for the composite AVL key.
+        // findById throws ProductNotFoundException if the product is already gone.
+        Product existing = productRepository.findById(productId);
+        productRepository.delete(productId);
         writeLock.lock();
         try {
-            priceIndex.delete(productId);
+            priceIndex.delete(existing.getPrice(), existing.getProductId());
             productCache.invalidate(productId);
         } finally {
             writeLock.unlock();

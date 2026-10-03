@@ -1,0 +1,21 @@
+GROUP,PACKAGE,CLASS,INSTRUCTION_MISSED,INSTRUCTION_COVERED,BRANCH_MISSED,BRANCH_COVERED,LINE_MISSED,LINE_COVERED,COMPLEXITY_MISSED,COMPLEXITY_COVERED,METHOD_MISSED,METHOD_COVERED
+StockFlow Inventory Management System,app,Main,10,0,0,0,4,0,2,0,2,0
+StockFlow Inventory Management System,exception,ProductNotFoundException,11,0,0,0,4,0,2,0,2,0
+StockFlow Inventory Management System,exception,InsufficientStockException,40,0,0,0,9,0,4,0,4,0
+StockFlow Inventory Management System,exception,TransactionExecutionException,9,0,0,0,4,0,2,0,2,0
+StockFlow Inventory Management System,database,DBConnection,104,0,16,0,33,0,12,0,4,0
+StockFlow Inventory Management System,dsa,ProductBST,7,346,4,38,1,62,4,33,0,16
+StockFlow Inventory Management System,dsa,ProductBST.Node,0,9,0,0,0,1,0,1,0,1
+StockFlow Inventory Management System,dsa,QueueManager,71,85,14,10,16,21,10,10,2,6
+StockFlow Inventory Management System,dsa,UndoManager.Action.Type,9,0,0,0,2,0,1,0,1,0
+StockFlow Inventory Management System,dsa,LRUProductCache.new LinkedHashMap() {...},0,17,0,2,0,2,0,3,0,2
+StockFlow Inventory Management System,dsa,UndoManager.Action,21,0,0,0,7,0,4,0,4,0
+StockFlow Inventory Management System,dsa,UndoManager,40,0,2,0,9,0,7,0,6,0
+StockFlow Inventory Management System,dsa,LRUProductCache,0,51,0,0,0,13,0,7,0,7
+StockFlow Inventory Management System,dao,ProductDAO,497,0,28,0,138,0,26,0,12,0
+StockFlow Inventory Management System,dao,OrderHistoryDAO,123,0,2,0,35,0,4,0,3,0
+StockFlow Inventory Management System,service,OrderService,286,0,20,0,88,0,20,0,10,0
+StockFlow Inventory Management System,service,InventoryService,292,0,8,0,71,0,17,0,13,0
+StockFlow Inventory Management System,model,Order,62,24,2,0,19,9,13,3,12,3
+StockFlow Inventory Management System,model,Product,53,27,0,0,19,10,12,3,12,3
+StockFlow Inventory Management System,menu,Menu,958,0,57,0,247,0,59,0,23,0

@@ -1,0 +1,380 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Menu.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">StockFlow Inventory Management System</a> &gt; <a href="index.source.html" class="el_package">menu</a> &gt; <span class="el_source">Menu.java</span></div><h1>Menu.java</h1><pre class="source lang-java linenums">package menu;
+
+import java.util.List;
+import java.util.Scanner;
+
+import dsa.QueueManager;
+import exception.InsufficientStockException;
+import exception.ProductNotFoundException;
+import exception.TransactionExecutionException;
+import model.Order;
+import model.Product;
+import service.InventoryService;
+import service.OrderService;
+
+/**
+ * Console menu — sole responsibility: I/O and user-facing message formatting.
+ *
+ * Clean Architecture boundary:
+ *  - Services throw typed domain exceptions (InsufficientStockException,
+ *    ProductNotFoundException, TransactionExecutionException).
+ *  - This class catches them and formats user-friendly messages.
+ *  - No business logic lives here; no System.out in services.
+ */
+public class Menu {
+
+<span class="nc" id="L26">    private final Scanner          sc               = new Scanner(System.in);</span>
+<span class="nc" id="L27">    private final InventoryService inventoryService = new InventoryService();</span>
+<span class="nc" id="L28">    private final QueueManager     queueManager     = new QueueManager();</span>
+<span class="nc" id="L29">    private final OrderService     orderService     = new OrderService(queueManager);</span>
+
+<span class="nc" id="L31">    public Menu() {</span>
+        // Wire InventoryService into OrderService so that a successful stock
+        // deduction also evicts the LRU cache entry — prevents stale stock reads.
+<span class="nc" id="L34">        orderService.setInventoryService(inventoryService);</span>
+<span class="nc" id="L35">    }</span>
+
+    // ─── Input Helpers ──────────────────────────────────────────────────────────
+
+    private int readInt(String prompt) {
+        while (true) {
+<span class="nc" id="L41">            System.out.print(prompt);</span>
+            try {
+<span class="nc" id="L43">                return Integer.parseInt(sc.nextLine().trim());</span>
+<span class="nc" id="L44">            } catch (NumberFormatException e) {</span>
+<span class="nc" id="L45">                System.out.println(&quot;  Invalid input. Please enter a whole number.&quot;);</span>
+<span class="nc" id="L46">            }</span>
+        }
+    }
+
+    private int readPositiveInt(String prompt) {
+        while (true) {
+<span class="nc" id="L52">            int value = readInt(prompt);</span>
+<span class="nc bnc" id="L53" title="All 2 branches missed.">            if (value &gt; 0) return value;</span>
+<span class="nc" id="L54">            System.out.println(&quot;  Value must be greater than zero.&quot;);</span>
+<span class="nc" id="L55">        }</span>
+    }
+
+    private double readPositiveDouble(String prompt) {
+        while (true) {
+<span class="nc" id="L60">            System.out.print(prompt);</span>
+            try {
+<span class="nc" id="L62">                double value = Double.parseDouble(sc.nextLine().trim());</span>
+<span class="nc bnc" id="L63" title="All 2 branches missed.">                if (value &gt; 0) return value;</span>
+<span class="nc" id="L64">                System.out.println(&quot;  Value must be greater than zero.&quot;);</span>
+<span class="nc" id="L65">            } catch (NumberFormatException e) {</span>
+<span class="nc" id="L66">                System.out.println(&quot;  Invalid input. Please enter a valid number.&quot;);</span>
+<span class="nc" id="L67">            }</span>
+        }
+    }
+
+    private double readNonNegativeDouble(String prompt) {
+        while (true) {
+<span class="nc" id="L73">            System.out.print(prompt);</span>
+            try {
+<span class="nc" id="L75">                double value = Double.parseDouble(sc.nextLine().trim());</span>
+<span class="nc bnc" id="L76" title="All 2 branches missed.">                if (value &gt;= 0) return value;</span>
+<span class="nc" id="L77">                System.out.println(&quot;  Value must be zero or greater.&quot;);</span>
+<span class="nc" id="L78">            } catch (NumberFormatException e) {</span>
+<span class="nc" id="L79">                System.out.println(&quot;  Invalid input. Please enter a valid number.&quot;);</span>
+<span class="nc" id="L80">            }</span>
+        }
+    }
+
+    private String readString(String prompt) {
+        while (true) {
+<span class="nc" id="L86">            System.out.print(prompt);</span>
+<span class="nc" id="L87">            String input = sc.nextLine().trim();</span>
+<span class="nc bnc" id="L88" title="All 2 branches missed.">            if (!input.isEmpty()) return input;</span>
+<span class="nc" id="L89">            System.out.println(&quot;  Input cannot be empty. Try again.&quot;);</span>
+<span class="nc" id="L90">        }</span>
+    }
+
+    // ─── Main Loop ──────────────────────────────────────────────────────────────
+
+    public void start() {
+<span class="nc" id="L96">        System.out.println(&quot;\n  Welcome to StockFlow – Inventory Management System&quot;);</span>
+        while (true) {
+<span class="nc" id="L98">            printMenu();</span>
+<span class="nc" id="L99">            int choice = readInt(&quot;  Choose: &quot;);</span>
+<span class="nc bnc" id="L100" title="All 17 branches missed.">            switch (choice) {</span>
+<span class="nc" id="L101">                case 1:  handleAddProduct();                break;</span>
+<span class="nc" id="L102">                case 2:  handleViewInventory();             break;</span>
+<span class="nc" id="L103">                case 3:  handleSearchById();                break;</span>
+<span class="nc" id="L104">                case 4:  handleSearchByName();              break;</span>
+<span class="nc" id="L105">                case 5:  handleUpdateProduct();             break;</span>
+<span class="nc" id="L106">                case 6:  handleDeleteProduct();             break;</span>
+<span class="nc" id="L107">                case 7:  handleRestockProduct();            break;</span>
+<span class="nc" id="L108">                case 8:  handleLowStockReport();            break;</span>
+<span class="nc" id="L109">                case 9:  handlePlaceOrder(0);               break;</span>
+<span class="nc" id="L110">                case 10: handlePlaceOrder(1);               break;</span>
+<span class="nc" id="L111">                case 11: handleProcessNextOrder();          break;</span>
+<span class="nc" id="L112">                case 12: orderService.viewPendingOrders();  break;</span>
+<span class="nc" id="L113">                case 13: handleViewOrderHistory();          break;</span>
+<span class="nc" id="L114">                case 14: handlePriceRangeSearch();          break;</span>
+<span class="nc" id="L115">                case 15: handleUndoLastAction();            break;</span>
+                case 0:
+<span class="nc" id="L117">                    System.out.println(&quot;\n  StockFlow shut down. Goodbye.&quot;);</span>
+<span class="nc" id="L118">                    return;</span>
+                default:
+<span class="nc" id="L120">                    System.out.println(&quot;  Invalid choice. Try again.&quot;);</span>
+            }
+<span class="nc" id="L122">        }</span>
+    }
+
+    private void printMenu() {
+<span class="nc" id="L126">        System.out.println(&quot;\n╔══════════════════════════════╗&quot;);</span>
+<span class="nc" id="L127">        System.out.println(&quot;║       S T O C K F L O W      ║&quot;);</span>
+<span class="nc" id="L128">        System.out.println(&quot;╠══════════════════════════════╣&quot;);</span>
+<span class="nc" id="L129">        System.out.println(&quot;║  INVENTORY                   ║&quot;);</span>
+<span class="nc" id="L130">        System.out.println(&quot;║   1. Add Product             ║&quot;);</span>
+<span class="nc" id="L131">        System.out.println(&quot;║   2. View Inventory          ║&quot;);</span>
+<span class="nc" id="L132">        System.out.println(&quot;║   3. Search by ID            ║&quot;);</span>
+<span class="nc" id="L133">        System.out.println(&quot;║   4. Search by Name          ║&quot;);</span>
+<span class="nc" id="L134">        System.out.println(&quot;║   5. Update Product          ║&quot;);</span>
+<span class="nc" id="L135">        System.out.println(&quot;║   6. Delete Product          ║&quot;);</span>
+<span class="nc" id="L136">        System.out.println(&quot;║   7. Restock Product         ║&quot;);</span>
+<span class="nc" id="L137">        System.out.println(&quot;║   8. Low Stock Report        ║&quot;);</span>
+<span class="nc" id="L138">        System.out.println(&quot;╠══════════════════════════════╣&quot;);</span>
+<span class="nc" id="L139">        System.out.println(&quot;║  ORDERS                      ║&quot;);</span>
+<span class="nc" id="L140">        System.out.println(&quot;║   9. Place Normal Order      ║&quot;);</span>
+<span class="nc" id="L141">        System.out.println(&quot;║  10. Place VIP Order         ║&quot;);</span>
+<span class="nc" id="L142">        System.out.println(&quot;║  11. Process Next Order      ║&quot;);</span>
+<span class="nc" id="L143">        System.out.println(&quot;║  12. View Pending Orders     ║&quot;);</span>
+<span class="nc" id="L144">        System.out.println(&quot;║  13. View Order History      ║&quot;);</span>
+<span class="nc" id="L145">        System.out.println(&quot;╠══════════════════════════════╣&quot;);</span>
+<span class="nc" id="L146">        System.out.println(&quot;║  OTHERS                      ║&quot;);</span>
+<span class="nc" id="L147">        System.out.println(&quot;║  14. Price Range Filter      ║&quot;);</span>
+<span class="nc" id="L148">        System.out.println(&quot;║  15. Undo Last Action        ║&quot;);</span>
+<span class="nc" id="L149">        System.out.println(&quot;╠══════════════════════════════╣&quot;);</span>
+<span class="nc" id="L150">        System.out.println(&quot;║   0. Exit                    ║&quot;);</span>
+<span class="nc" id="L151">        System.out.println(&quot;╚══════════════════════════════╝&quot;);</span>
+<span class="nc" id="L152">    }</span>
+
+    // ─── Inventory Handlers ─────────────────────────────────────────────────────
+
+    private void handleAddProduct() {
+<span class="nc" id="L157">        System.out.println(&quot;\n  -- Add Product --&quot;);</span>
+<span class="nc" id="L158">        String name         = readString(&quot;  Name: &quot;);</span>
+<span class="nc" id="L159">        String category     = readString(&quot;  Category: &quot;);</span>
+<span class="nc" id="L160">        double price        = readPositiveDouble(&quot;  Price: &quot;);</span>
+<span class="nc" id="L161">        int    stock        = readInt(&quot;  Initial Stock: &quot;);</span>
+<span class="nc" id="L162">        int    minimumStock = readPositiveInt(&quot;  Minimum Stock Alert Level: &quot;);</span>
+
+<span class="nc" id="L164">        Product product = new Product(0, name, category, price, stock, minimumStock);</span>
+        try {
+<span class="nc" id="L166">            inventoryService.addProduct(product);</span>
+<span class="nc" id="L167">            System.out.println(&quot;  Product added successfully.&quot;);</span>
+<span class="nc" id="L168">        } catch (TransactionExecutionException e) {</span>
+<span class="nc" id="L169">            System.out.println(&quot;  Failed to add product: &quot; + e.getMessage());</span>
+<span class="nc" id="L170">        }</span>
+<span class="nc" id="L171">    }</span>
+
+    private void handleViewInventory() {
+<span class="nc" id="L174">        List&lt;Product&gt; products = inventoryService.viewInventory();</span>
+<span class="nc bnc" id="L175" title="All 2 branches missed.">        if (products.isEmpty()) {</span>
+<span class="nc" id="L176">            System.out.println(&quot;  No products in inventory.&quot;);</span>
+<span class="nc" id="L177">            return;</span>
+        }
+<span class="nc" id="L179">        System.out.println(&quot;\n  -- Inventory (&quot; + products.size() + &quot; products) --&quot;);</span>
+<span class="nc" id="L180">        printProductTableHeader();</span>
+<span class="nc bnc" id="L181" title="All 2 branches missed.">        for (Product p : products) printProductRow(p);</span>
+<span class="nc" id="L182">    }</span>
+
+    private void handleSearchById() {
+<span class="nc" id="L185">        int id = readInt(&quot;  Product ID: &quot;);</span>
+        try {
+<span class="nc" id="L187">            Product product = inventoryService.searchById(id);</span>
+<span class="nc" id="L188">            System.out.println(&quot;  Found: &quot; + product);</span>
+<span class="nc" id="L189">        } catch (ProductNotFoundException e) {</span>
+<span class="nc" id="L190">            System.out.println(&quot;  &quot; + e.getMessage());</span>
+<span class="nc" id="L191">        }</span>
+<span class="nc" id="L192">    }</span>
+
+    private void handleSearchByName() {
+<span class="nc" id="L195">        String keyword          = readString(&quot;  Search keyword: &quot;);</span>
+<span class="nc" id="L196">        List&lt;Product&gt; results   = inventoryService.searchByName(keyword);</span>
+<span class="nc bnc" id="L197" title="All 2 branches missed.">        if (results.isEmpty()) {</span>
+<span class="nc" id="L198">            System.out.println(&quot;  No products matched '&quot; + keyword + &quot;'.&quot;);</span>
+<span class="nc" id="L199">            return;</span>
+        }
+<span class="nc" id="L201">        System.out.println(&quot;\n  -- Search Results (&quot; + results.size() + &quot; found) --&quot;);</span>
+<span class="nc" id="L202">        printProductTableHeader();</span>
+<span class="nc bnc" id="L203" title="All 2 branches missed.">        for (Product p : results) printProductRow(p);</span>
+<span class="nc" id="L204">    }</span>
+
+    private void handleUpdateProduct() {
+<span class="nc" id="L207">        int id = readInt(&quot;  Product ID to update: &quot;);</span>
+        Product existing;
+        try {
+<span class="nc" id="L210">            existing = inventoryService.searchById(id);</span>
+<span class="nc" id="L211">        } catch (ProductNotFoundException e) {</span>
+<span class="nc" id="L212">            System.out.println(&quot;  &quot; + e.getMessage());</span>
+<span class="nc" id="L213">            return;</span>
+<span class="nc" id="L214">        }</span>
+
+<span class="nc" id="L216">        System.out.println(&quot;  Current: &quot; + existing);</span>
+<span class="nc" id="L217">        System.out.println(&quot;  (Press Enter to keep existing value)&quot;);</span>
+
+<span class="nc" id="L219">        String name     = readString(&quot;  New Name [&quot; + existing.getProductName() + &quot;]: &quot;);</span>
+<span class="nc" id="L220">        String category = readString(&quot;  New Category [&quot; + existing.getCategory() + &quot;]: &quot;);</span>
+
+<span class="nc" id="L222">        double price = existing.getPrice();</span>
+<span class="nc" id="L223">        System.out.print(&quot;  New Price [&quot; + existing.getPrice() + &quot;]: &quot;);</span>
+<span class="nc" id="L224">        String priceInput = sc.nextLine().trim();</span>
+<span class="nc bnc" id="L225" title="All 2 branches missed.">        if (!priceInput.isEmpty()) {</span>
+<span class="nc" id="L226">            try { price = Double.parseDouble(priceInput); }</span>
+<span class="nc" id="L227">            catch (NumberFormatException e) { System.out.println(&quot;  Invalid price, keeping existing.&quot;); }</span>
+        }
+
+<span class="nc" id="L230">        int minStock = existing.getMinimumStock();</span>
+<span class="nc" id="L231">        System.out.print(&quot;  New Min Stock [&quot; + existing.getMinimumStock() + &quot;]: &quot;);</span>
+<span class="nc" id="L232">        String minInput = sc.nextLine().trim();</span>
+<span class="nc bnc" id="L233" title="All 2 branches missed.">        if (!minInput.isEmpty()) {</span>
+<span class="nc" id="L234">            try { minStock = Integer.parseInt(minInput); }</span>
+<span class="nc" id="L235">            catch (NumberFormatException e) { System.out.println(&quot;  Invalid value, keeping existing.&quot;); }</span>
+        }
+
+<span class="nc" id="L238">        Product updated = new Product(id, name, category, price, existing.getStock(), minStock);</span>
+        try {
+<span class="nc" id="L240">            inventoryService.updateProduct(updated);</span>
+<span class="nc" id="L241">            System.out.println(&quot;  Product updated successfully.&quot;);</span>
+<span class="nc" id="L242">        } catch (ProductNotFoundException e) {</span>
+<span class="nc" id="L243">            System.out.println(&quot;  &quot; + e.getMessage());</span>
+<span class="nc" id="L244">        } catch (TransactionExecutionException e) {</span>
+<span class="nc" id="L245">            System.out.println(&quot;  Update failed: &quot; + e.getMessage());</span>
+<span class="nc" id="L246">        }</span>
+<span class="nc" id="L247">    }</span>
+
+    private void handleDeleteProduct() {
+<span class="nc" id="L250">        int id = readInt(&quot;  Product ID to delete: &quot;);</span>
+<span class="nc" id="L251">        System.out.print(&quot;  Confirm delete product #&quot; + id + &quot;? (yes/no): &quot;);</span>
+<span class="nc" id="L252">        String confirm = sc.nextLine().trim();</span>
+<span class="nc bnc" id="L253" title="All 2 branches missed.">        if (!confirm.equalsIgnoreCase(&quot;yes&quot;)) {</span>
+<span class="nc" id="L254">            System.out.println(&quot;  Delete cancelled.&quot;);</span>
+<span class="nc" id="L255">            return;</span>
+        }
+        try {
+<span class="nc" id="L258">            inventoryService.deleteProduct(id);</span>
+<span class="nc" id="L259">            System.out.println(&quot;  Product #&quot; + id + &quot; deleted.&quot;);</span>
+<span class="nc" id="L260">        } catch (ProductNotFoundException e) {</span>
+<span class="nc" id="L261">            System.out.println(&quot;  &quot; + e.getMessage());</span>
+<span class="nc" id="L262">        } catch (TransactionExecutionException e) {</span>
+<span class="nc" id="L263">            System.out.println(&quot;  Delete failed: &quot; + e.getMessage());</span>
+<span class="nc" id="L264">        }</span>
+<span class="nc" id="L265">    }</span>
+
+    private void handleRestockProduct() {
+<span class="nc" id="L268">        int id       = readInt(&quot;  Product ID: &quot;);</span>
+<span class="nc" id="L269">        int quantity = readPositiveInt(&quot;  Quantity to add: &quot;);</span>
+        try {
+<span class="nc" id="L271">            inventoryService.restockProduct(id, quantity);</span>
+<span class="nc" id="L272">            System.out.println(&quot;  Stock updated. Added &quot; + quantity + &quot; units.&quot;);</span>
+<span class="nc" id="L273">        } catch (ProductNotFoundException e) {</span>
+<span class="nc" id="L274">            System.out.println(&quot;  &quot; + e.getMessage());</span>
+<span class="nc" id="L275">        } catch (TransactionExecutionException e) {</span>
+<span class="nc" id="L276">            System.out.println(&quot;  Restock failed: &quot; + e.getMessage());</span>
+<span class="nc" id="L277">        }</span>
+<span class="nc" id="L278">    }</span>
+
+    private void handleLowStockReport() {
+<span class="nc" id="L281">        List&lt;Product&gt; lowStock = inventoryService.getLowStockProducts();</span>
+<span class="nc bnc" id="L282" title="All 2 branches missed.">        if (lowStock.isEmpty()) {</span>
+<span class="nc" id="L283">            System.out.println(&quot;  All products are sufficiently stocked.&quot;);</span>
+<span class="nc" id="L284">            return;</span>
+        }
+<span class="nc" id="L286">        System.out.println(&quot;\n  -- Low Stock Report (&quot; + lowStock.size() + &quot; products need restocking) --&quot;);</span>
+<span class="nc" id="L287">        printProductTableHeader();</span>
+<span class="nc bnc" id="L288" title="All 2 branches missed.">        for (Product p : lowStock) printProductRow(p);</span>
+<span class="nc" id="L289">    }</span>
+
+    // ─── Order Handlers ─────────────────────────────────────────────────────────
+
+    private void handlePlaceOrder(int priority) {
+<span class="nc bnc" id="L294" title="All 2 branches missed.">        String type    = (priority == 1) ? &quot;VIP&quot; : &quot;Normal&quot;;</span>
+<span class="nc" id="L295">        System.out.println(&quot;\n  -- Place &quot; + type + &quot; Order --&quot;);</span>
+<span class="nc" id="L296">        String name    = readString(&quot;  Customer Name: &quot;);</span>
+<span class="nc" id="L297">        int productId  = readInt(&quot;  Product ID: &quot;);</span>
+<span class="nc" id="L298">        int quantity   = readPositiveInt(&quot;  Quantity: &quot;);</span>
+
+        try {
+<span class="nc" id="L301">            orderService.placeOrder(name, productId, quantity, priority);</span>
+<span class="nc" id="L302">            System.out.println(&quot;  Order queued as &quot; + type + &quot; for &quot; + name + &quot;.&quot;);</span>
+<span class="nc" id="L303">        } catch (ProductNotFoundException e) {</span>
+<span class="nc" id="L304">            System.out.println(&quot;  Cannot place order — &quot; + e.getMessage());</span>
+<span class="nc" id="L305">        } catch (InsufficientStockException e) {</span>
+<span class="nc" id="L306">            System.out.println(&quot;  Cannot place order — Insufficient stock.&quot;</span>
+<span class="nc" id="L307">                + &quot; Requested: &quot; + e.getRequested()</span>
+<span class="nc" id="L308">                + &quot;, Available: &quot; + e.getAvailable() + &quot;.&quot;);</span>
+<span class="nc" id="L309">        }</span>
+<span class="nc" id="L310">    }</span>
+
+    private void handleProcessNextOrder() {
+        try {
+<span class="nc" id="L314">            orderService.processNextOrder();</span>
+<span class="nc" id="L315">        } catch (InsufficientStockException e) {</span>
+<span class="nc" id="L316">            System.out.println(&quot;  Order cancelled — stock depleted for product #&quot;</span>
+<span class="nc" id="L317">                + e.getProductId() + &quot;. Requested: &quot; + e.getRequested() + &quot;.&quot;);</span>
+<span class="nc" id="L318">        } catch (ProductNotFoundException e) {</span>
+<span class="nc" id="L319">            System.out.println(&quot;  Order cancelled — &quot; + e.getMessage());</span>
+<span class="nc" id="L320">        } catch (TransactionExecutionException e) {</span>
+<span class="nc" id="L321">            System.out.println(&quot;  Order processing failed (transaction rolled back): &quot; + e.getMessage());</span>
+<span class="nc" id="L322">        }</span>
+<span class="nc" id="L323">    }</span>
+
+    private void handleViewOrderHistory() {
+<span class="nc" id="L326">        List&lt;Order&gt; history = orderService.getOrderHistory();</span>
+<span class="nc bnc" id="L327" title="All 2 branches missed.">        if (history.isEmpty()) {</span>
+<span class="nc" id="L328">            System.out.println(&quot;  No order history yet.&quot;);</span>
+<span class="nc" id="L329">            return;</span>
+        }
+<span class="nc" id="L331">        System.out.println(&quot;\n  -- Order History (Latest First) --&quot;);</span>
+<span class="nc" id="L332">        System.out.printf(&quot;  %-8s %-18s %-10s %-6s %-8s%n&quot;, &quot;OrderID&quot;, &quot;Customer&quot;, &quot;ProductID&quot;, &quot;Qty&quot;, &quot;Type&quot;);</span>
+<span class="nc" id="L333">        System.out.println(&quot;  &quot; + &quot;-&quot;.repeat(56));</span>
+<span class="nc bnc" id="L334" title="All 2 branches missed.">        for (Order o : history) {</span>
+<span class="nc bnc" id="L335" title="All 2 branches missed.">            String type = (o.getPriority() == 1) ? &quot;VIP&quot; : &quot;Normal&quot;;</span>
+<span class="nc" id="L336">            System.out.printf(&quot;  %-8d %-18s %-10d %-6d %-8s%n&quot;,</span>
+<span class="nc" id="L337">                o.getOrderId(), o.getCustomerName(), o.getProductId(), o.getQuantity(), type);</span>
+<span class="nc" id="L338">        }</span>
+<span class="nc" id="L339">    }</span>
+
+    private void handlePriceRangeSearch() {
+<span class="nc" id="L342">        System.out.println(&quot;\n  -- Search Products by Price Range --&quot;);</span>
+<span class="nc" id="L343">        double min = readNonNegativeDouble(&quot;  Min price ($): &quot;);</span>
+        double max;
+        while (true) {
+<span class="nc" id="L346">            max = readNonNegativeDouble(&quot;  Max price ($): &quot;);</span>
+<span class="nc bnc" id="L347" title="All 2 branches missed.">            if (max &gt;= min) break;</span>
+<span class="nc" id="L348">            System.out.println(&quot;  Max price must be &gt;= min price ($&quot; + min + &quot;). Try again.&quot;);</span>
+        }
+<span class="nc" id="L350">        List&lt;Product&gt; results = inventoryService.filterByPrice(min, max);</span>
+<span class="nc bnc" id="L351" title="All 2 branches missed.">        if (results.isEmpty()) {</span>
+<span class="nc" id="L352">            System.out.println(&quot;  No products found in price range [$&quot; + min + &quot; – $&quot; + max + &quot;].&quot;);</span>
+<span class="nc" id="L353">            return;</span>
+        }
+<span class="nc" id="L355">        System.out.println(&quot;\n  -- Price Range Results: $&quot; + min + &quot; to $&quot; + max</span>
+<span class="nc" id="L356">            + &quot; (&quot; + results.size() + &quot; product(s), sorted by price) --&quot;);</span>
+<span class="nc" id="L357">        printProductTableHeader();</span>
+<span class="nc bnc" id="L358" title="All 2 branches missed.">        for (Product p : results) printProductRow(p);</span>
+<span class="nc" id="L359">    }</span>
+
+    private void handleUndoLastAction() {
+<span class="nc" id="L362">        System.out.println(&quot;\n  -- Undo Last Action --&quot;);</span>
+<span class="nc" id="L363">        orderService.undoLastAction();</span>
+<span class="nc" id="L364">    }</span>
+
+    // ─── Table Formatting ───────────────────────────────────────────────────────
+
+    private void printProductTableHeader() {
+<span class="nc" id="L369">        System.out.printf(&quot;  %-5s %-20s %-15s %-8s %-7s %-8s%n&quot;,</span>
+            &quot;ID&quot;, &quot;Name&quot;, &quot;Category&quot;, &quot;Price&quot;, &quot;Stock&quot;, &quot;MinStock&quot;);
+<span class="nc" id="L371">        System.out.println(&quot;  &quot; + &quot;-&quot;.repeat(68));</span>
+<span class="nc" id="L372">    }</span>
+
+    private void printProductRow(Product p) {
+<span class="nc" id="L375">        System.out.printf(&quot;  %-5d %-20s %-15s %-8.2f %-7d %-8d%n&quot;,</span>
+<span class="nc" id="L376">            p.getProductId(), p.getProductName(), p.getCategory(),</span>
+<span class="nc" id="L377">            p.getPrice(), p.getStock(), p.getMinimumStock());</span>
+<span class="nc" id="L378">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

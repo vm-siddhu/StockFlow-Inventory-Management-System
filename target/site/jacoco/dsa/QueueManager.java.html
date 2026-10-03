@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>QueueManager.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">StockFlow Inventory Management System</a> &gt; <a href="index.source.html" class="el_package">dsa</a> &gt; <span class="el_source">QueueManager.java</span></div><h1>QueueManager.java</h1><pre class="source lang-java linenums">package dsa;
+
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.Iterator;
+
+import model.Order;
+
+/**
+ * Thread-safe dual-priority order queue.
+ *
+ * Design — ConcurrentLinkedQueue (Michael-Scott non-blocking queue):
+ *  - Lock-free, wait-free offer() and poll() using CAS (Compare-And-Swap) operations.
+ *  - No thread ever blocks waiting for a lock — eliminates the deadlock risk
+ *    present in the original LinkedList-based implementation.
+ *  - Weakly consistent iterators: safe to iterate while other threads modify
+ *    the queue (no ConcurrentModificationException).
+ *
+ * Priority semantics (unchanged):
+ *  - VIP orders (priority=1) are always dequeued before normal orders.
+ *  - Within the same priority tier, FIFO ordering is preserved by CLQ.
+ *
+ * Replaces: LinkedList&lt;Order&gt; which is not thread-safe — concurrent
+ * addOrder() + getNextOrder() calls could corrupt internal list pointers.
+ */
+<span class="fc" id="L25">public class QueueManager {</span>
+
+    // ConcurrentLinkedQueue — lock-free, unbounded, thread-safe FIFO
+<span class="fc" id="L28">    private final ConcurrentLinkedQueue&lt;Order&gt; vipQueue    = new ConcurrentLinkedQueue&lt;&gt;();</span>
+<span class="fc" id="L29">    private final ConcurrentLinkedQueue&lt;Order&gt; normalQueue = new ConcurrentLinkedQueue&lt;&gt;();</span>
+
+    /**
+     * Enqueue an order into the appropriate priority lane.
+     * Thread-safe: ConcurrentLinkedQueue.offer() uses CAS internally.
+     */
+    public void addOrder(Order order) {
+<span class="fc bfc" id="L36" title="All 2 branches covered.">        if (order.getPriority() == 1) {</span>
+<span class="fc" id="L37">            vipQueue.offer(order);</span>
+        } else {
+<span class="fc" id="L39">            normalQueue.offer(order);</span>
+        }
+<span class="fc" id="L41">    }</span>
+
+    /**
+     * Dequeue and return the highest-priority pending order.
+     * VIP lane is drained completely before normal lane is touched.
+     *
+     * Thread-safe: poll() is an atomic CAS operation — no explicit lock needed.
+     * Returns null if both queues are empty.
+     */
+    public Order getNextOrder() {
+<span class="fc" id="L51">        Order order = vipQueue.poll();</span>
+<span class="fc bfc" id="L52" title="All 2 branches covered.">        if (order != null) return order;</span>
+<span class="fc" id="L53">        return normalQueue.poll();</span>
+    }
+
+    /**
+     * Remove a specific order by orderId from whichever queue holds it.
+     * Used by UndoManager to cancel a queued-but-unprocessed order.
+     *
+     * ConcurrentLinkedQueue.remove(o) uses equals() comparison and is thread-safe.
+     * We compare by orderId manually via iterator for precise control.
+     *
+     * Note: removeOrder is O(n) but is only called on explicit user undo —
+     * not on the hot path.
+     */
+    public boolean removeOrder(Order order) {
+        // Try VIP queue first
+<span class="fc" id="L68">        Iterator&lt;Order&gt; vipIter = vipQueue.iterator();</span>
+<span class="fc bfc" id="L69" title="All 2 branches covered.">        while (vipIter.hasNext()) {</span>
+<span class="pc bpc" id="L70" title="1 of 2 branches missed.">            if (vipIter.next().getOrderId() == order.getOrderId()) {</span>
+<span class="fc" id="L71">                vipIter.remove();  // weakly consistent remove — safe with CLQ</span>
+<span class="fc" id="L72">                return true;</span>
+            }
+        }
+        // Try normal queue
+<span class="fc" id="L76">        Iterator&lt;Order&gt; normalIter = normalQueue.iterator();</span>
+<span class="fc bfc" id="L77" title="All 2 branches covered.">        while (normalIter.hasNext()) {</span>
+<span class="pc bpc" id="L78" title="1 of 2 branches missed.">            if (normalIter.next().getOrderId() == order.getOrderId()) {</span>
+<span class="nc" id="L79">                normalIter.remove();</span>
+<span class="nc" id="L80">                return true;</span>
+            }
+        }
+<span class="fc" id="L83">        return false;</span>
+    }
+
+    /**
+     * Display all pending orders for both queues.
+     * CLQ's weakly-consistent iterator means we may miss very recent additions
+     * under heavy concurrency — acceptable for a display-only operation.
+     */
+    public void viewPendingOrders() {
+<span class="nc" id="L92">        System.out.println(&quot;\n  --- VIP Queue ---&quot;);</span>
+<span class="nc bnc" id="L93" title="All 2 branches missed.">        if (vipQueue.isEmpty()) {</span>
+<span class="nc" id="L94">            System.out.println(&quot;  (empty)&quot;);</span>
+        } else {
+<span class="nc bnc" id="L96" title="All 2 branches missed.">            for (Order order : vipQueue) {</span>
+<span class="nc" id="L97">                System.out.println(&quot;  &quot; + order);</span>
+<span class="nc" id="L98">            }</span>
+        }
+<span class="nc" id="L100">        System.out.println(&quot;  --- Normal Queue ---&quot;);</span>
+<span class="nc bnc" id="L101" title="All 2 branches missed.">        if (normalQueue.isEmpty()) {</span>
+<span class="nc" id="L102">            System.out.println(&quot;  (empty)&quot;);</span>
+        } else {
+<span class="nc bnc" id="L104" title="All 2 branches missed.">            for (Order order : normalQueue) {</span>
+<span class="nc" id="L105">                System.out.println(&quot;  &quot; + order);</span>
+<span class="nc" id="L106">            }</span>
+        }
+<span class="nc" id="L108">    }</span>
+
+    /** O(n) size — CLQ does not maintain a constant-time size counter. */
+    public int vipCount() {
+<span class="fc" id="L112">        return vipQueue.size();</span>
+    }
+
+    public int normalCount() {
+<span class="fc" id="L116">        return normalQueue.size();</span>
+    }
+
+    public boolean hasPendingOrders() {
+<span class="nc bnc" id="L120" title="All 4 branches missed.">        return !vipQueue.isEmpty() || !normalQueue.isEmpty();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

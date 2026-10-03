@@ -1,0 +1,284 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>OrderService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">StockFlow Inventory Management System</a> &gt; <a href="index.source.html" class="el_package">service</a> &gt; <span class="el_source">OrderService.java</span></div><h1>OrderService.java</h1><pre class="source lang-java linenums">package service;
+
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import dao.OrderHistoryDAO;
+import dao.ProductDAO;
+import database.DBConnection;
+import dsa.QueueManager;
+import dsa.UndoManager;
+import dsa.UndoManager.Action;
+import exception.InsufficientStockException;
+import exception.ProductNotFoundException;
+import exception.TransactionExecutionException;
+import model.Order;
+import model.Product;
+import repository.OrderRepository;
+import repository.ProductRepository;
+
+/**
+ * Order processing service — ACID-compliant, thread-safe.
+ *
+ * Transaction Design (processNextOrder):
+ * ┌────────────────────────────────────────────────────────────────┐
+ * │  acquire conn from HikariCP pool                              │
+ * │  conn.setAutoCommit(false)   ← begin explicit transaction     │
+ * │                                                               │
+ * │  ① productRepository.deductStock(conn, id, qty)              │
+ * │      → UPDATE ... WHERE stock &gt;= qty   (atomic CAS at DB)    │
+ * │      → returns false if stock &lt; qty   → rollback             │
+ * │                                                               │
+ * │  ② orderRepository.save(order, conn)                         │
+ * │      → INSERT into order_history   (same connection/txn)     │
+ * │                                                               │
+ * │  conn.commit()    ← both writes committed atomically         │
+ * │                                                               │
+ * │  catch any failure → conn.rollback()   ← neither persists    │
+ * │  finally → conn.setAutoCommit(true) → return to pool         │
+ * └────────────────────────────────────────────────────────────────┘
+ *
+ * Thread-Safety:
+ *  - orderIdCounter is AtomicInteger — thread-safe increment without synchronized.
+ *  - QueueManager uses ConcurrentLinkedQueue — lock-free.
+ *  - UndoManager uses LinkedBlockingDeque — intrinsically thread-safe.
+ *  - The DB-level conditional UPDATE prevents overselling even when multiple
+ *    threads pass the queue-level stock pre-check simultaneously.
+ */
+public class OrderService {
+
+    private final ProductRepository productRepository;
+    private final OrderRepository   orderRepository;
+    private final QueueManager      queueManager;
+    private final UndoManager       undoManager;
+
+    /**
+     * Optional reference to InventoryService.
+     * When set, successful stock deductions invalidate the LRU cache entry so
+     * that searchById() never returns a stale (pre-deduction) stock count.
+     * May be null when OrderService is constructed without an InventoryService
+     * reference (e.g., in unit tests that don't need cache coordination).
+     */
+    private InventoryService inventoryService;
+
+    // AtomicInteger replaces plain int — thread-safe increment under concurrent order placement
+<span class="nc" id="L67">    private final AtomicInteger orderIdCounter = new AtomicInteger(1);</span>
+
+    // Max times a temporarily-failing order is put back before it is discarded
+    private static final int MAX_ORDER_RETRIES = 3;
+
+<span class="nc" id="L72">    public OrderService(QueueManager queueManager) {</span>
+<span class="nc" id="L73">        ProductDAO      productDAO      = new ProductDAO();</span>
+<span class="nc" id="L74">        OrderHistoryDAO orderHistoryDAO = new OrderHistoryDAO();</span>
+<span class="nc" id="L75">        this.productRepository = productDAO;</span>
+<span class="nc" id="L76">        this.orderRepository   = orderHistoryDAO;</span>
+<span class="nc" id="L77">        this.queueManager      = queueManager;</span>
+<span class="nc" id="L78">        this.undoManager       = new UndoManager();</span>
+<span class="nc" id="L79">    }</span>
+
+    /**
+     * Wire an InventoryService so that post-commit cache invalidation is active.
+     * Called by Menu after both services are constructed.
+     */
+    public void setInventoryService(InventoryService inventoryService) {
+<span class="nc" id="L86">        this.inventoryService = inventoryService;</span>
+<span class="nc" id="L87">    }</span>
+
+    /**
+     * Constructor-injection overload — for unit tests that supply fake repositories.
+     */
+    public OrderService(ProductRepository productRepository,
+                        OrderRepository   orderRepository,
+<span class="nc" id="L94">                        QueueManager      queueManager) {</span>
+<span class="nc" id="L95">        this.productRepository = productRepository;</span>
+<span class="nc" id="L96">        this.orderRepository   = orderRepository;</span>
+<span class="nc" id="L97">        this.queueManager      = queueManager;</span>
+<span class="nc" id="L98">        this.undoManager       = new UndoManager();</span>
+<span class="nc" id="L99">    }</span>
+
+    // ─── Place Order (queuing phase) ────────────────────────────────────────────
+
+    /**
+     * Validate stock and enqueue an order for later processing.
+     *
+     * Note: The stock check here is a SOFT check for user feedback only.
+     * The authoritative hard check happens inside processNextOrder() via the
+     * conditional UPDATE — preventing oversell even if stock drops between
+     * this check and processing.
+     *
+     * Throws:
+     *   ProductNotFoundException    — if product does not exist
+     *   InsufficientStockException  — if stock is clearly insufficient at enqueueing time
+     */
+    public void placeOrder(String customerName, int productId, int quantity, int priority) {
+        // findById throws ProductNotFoundException if not found
+<span class="nc" id="L117">        Product product = productRepository.findById(productId);</span>
+
+<span class="nc bnc" id="L119" title="All 2 branches missed.">        if (product.getStock() &lt; quantity) {</span>
+<span class="nc" id="L120">            throw new InsufficientStockException(productId, quantity, product.getStock());</span>
+        }
+
+<span class="nc" id="L123">        Order order = new Order(orderIdCounter.getAndIncrement(), customerName, productId, quantity, priority);</span>
+<span class="nc" id="L124">        queueManager.addOrder(order);</span>
+<span class="nc" id="L125">        undoManager.pushAction(Action.Type.PLACE_ORDER, order);</span>
+<span class="nc" id="L126">    }</span>
+
+    // ─── Process Next Order (transactional phase) ───────────────────────────────
+
+    /**
+     * Dequeue and atomically process the next highest-priority order.
+     *
+     * ACID guarantees:
+     *  - Atomicity  : stock deduction and history insert commit together or not at all.
+     *  - Consistency: conditional UPDATE ensures stock never goes negative.
+     *  - Isolation  : REPEATABLE_READ isolation on the connection prevents dirty reads.
+     *  - Durability : conn.commit() flushes both writes to durable storage.
+     *
+     * Throws:
+     *   InsufficientStockException    — DB-level stock check failed (CAS returned 0 rows)
+     *   ProductNotFoundException      — product deleted between queuing and processing
+     *   TransactionExecutionException — any SQL failure; transaction is rolled back
+     */
+    public void processNextOrder() {
+<span class="nc" id="L145">        Order order = queueManager.getNextOrder();</span>
+<span class="nc bnc" id="L146" title="All 2 branches missed.">        if (order == null) {</span>
+<span class="nc" id="L147">            System.out.println(&quot;  No pending orders in queue.&quot;);</span>
+<span class="nc" id="L148">            return;</span>
+        }
+
+<span class="nc" id="L151">        Connection conn = null;</span>
+        try {
+            // ── Acquire connection and begin transaction ──────────────────────
+<span class="nc" id="L154">            conn = DBConnection.getConnection();</span>
+<span class="nc" id="L155">            conn.setAutoCommit(false);  // BEGIN TRANSACTION</span>
+
+            // ── Step 1: Atomic stock deduction (CAS at DB level) ──────────────
+            // SQL: UPDATE products SET stock = stock - ? WHERE product_id = ? AND stock &gt;= ?
+            // Returns false if stock was insufficient — rolled back below
+<span class="nc" id="L160">            boolean deducted = productRepository.deductStock(conn, order.getProductId(), order.getQuantity());</span>
+<span class="nc bnc" id="L161" title="All 2 branches missed.">            if (!deducted) {</span>
+<span class="nc" id="L162">                conn.rollback();</span>
+                // Stock was genuinely insufficient — do NOT re-enqueue; discard.
+<span class="nc" id="L164">                throw new InsufficientStockException(</span>
+<span class="nc" id="L165">                    order.getProductId(), order.getQuantity(), 0);</span>
+            }
+
+            // ── Step 2: Insert history record (same connection/transaction) ───
+<span class="nc" id="L169">            orderRepository.save(order, conn);</span>
+
+            // ── Commit: both operations succeed atomically ────────────────────
+<span class="nc" id="L172">            conn.commit();</span>
+
+            // ── Invalidate LRU cache so next searchById sees updated stock ────
+            // The conditional UPDATE changed stock in the DB; the cached entry
+            // now holds a stale count. Evicting it forces the next read to hit DB.
+<span class="nc bnc" id="L177" title="All 2 branches missed.">            if (inventoryService != null) {</span>
+<span class="nc" id="L178">                inventoryService.invalidateProductCache(order.getProductId());</span>
+            }
+
+<span class="nc" id="L181">            System.out.println(&quot;  [COMMIT] Order #&quot; + order.getOrderId()</span>
+<span class="nc" id="L182">                + &quot; processed for &quot; + order.getCustomerName()</span>
+<span class="nc" id="L183">                + &quot; | Product #&quot; + order.getProductId()</span>
+<span class="nc" id="L184">                + &quot; | Qty: &quot; + order.getQuantity());</span>
+
+<span class="nc" id="L186">        } catch (InsufficientStockException | ProductNotFoundException e) {</span>
+            // Business-logic failures — permanent; do NOT re-enqueue the order.
+<span class="nc" id="L188">            safeRollback(conn);</span>
+<span class="nc" id="L189">            throw e;  // re-throw for Menu to catch and display</span>
+
+<span class="nc" id="L191">        } catch (TransactionExecutionException e) {</span>
+            // Transient DB failure — roll back and put the order back in queue.
+<span class="nc" id="L193">            safeRollback(conn);</span>
+<span class="nc" id="L194">            requeueIfRetriable(order);</span>
+<span class="nc" id="L195">            throw e;</span>
+
+<span class="nc" id="L197">        } catch (SQLException e) {</span>
+<span class="nc" id="L198">            safeRollback(conn);</span>
+<span class="nc" id="L199">            requeueIfRetriable(order);</span>
+<span class="nc" id="L200">            throw new TransactionExecutionException(</span>
+<span class="nc" id="L201">                &quot;Transaction failed for order #&quot; + order.getOrderId(), e);</span>
+
+        } finally {
+            // ── Always reset autoCommit and return connection to pool ─────────
+<span class="nc bnc" id="L205" title="All 2 branches missed.">            if (conn != null) {</span>
+                try {
+<span class="nc" id="L207">                    conn.setAutoCommit(true);  // reset state before returning to pool</span>
+<span class="nc" id="L208">                    conn.close();              // returns to HikariCP pool (no TCP close)</span>
+<span class="nc" id="L209">                } catch (SQLException ignored) {}</span>
+            }
+        }
+<span class="nc" id="L212">    }</span>
+
+    // ─── View &amp; History ────────────────────────────────────────────────────────
+
+    public void viewPendingOrders() {
+<span class="nc" id="L217">        System.out.println(&quot;  Pending — VIP: &quot; + queueManager.vipCount()</span>
+<span class="nc" id="L218">            + &quot; | Normal: &quot; + queueManager.normalCount());</span>
+<span class="nc" id="L219">        queueManager.viewPendingOrders();</span>
+<span class="nc" id="L220">    }</span>
+
+    public List&lt;Order&gt; getOrderHistory() {
+<span class="nc" id="L223">        return orderRepository.findAll();</span>
+    }
+
+    // ─── Undo ──────────────────────────────────────────────────────────────────
+
+    /**
+     * Undo the last queued order by removing it from the pending queue.
+     * Undo is only possible for orders that have NOT yet been processed.
+     * Once processNextOrder() commits, the action is permanent.
+     */
+    public void undoLastAction() {
+<span class="nc" id="L234">        Action action = undoManager.popAction();</span>
+<span class="nc bnc" id="L235" title="All 2 branches missed.">        if (action == null) {</span>
+<span class="nc" id="L236">            System.out.println(&quot;  Nothing to undo — undo stack is empty.&quot;);</span>
+<span class="nc" id="L237">            return;</span>
+        }
+<span class="nc bnc" id="L239" title="All 2 branches missed.">        if (action.getType() == Action.Type.PLACE_ORDER) {</span>
+<span class="nc" id="L240">            Order order   = action.getOrder();</span>
+<span class="nc" id="L241">            boolean removed = queueManager.removeOrder(order);</span>
+<span class="nc bnc" id="L242" title="All 2 branches missed.">            if (removed) {</span>
+<span class="nc" id="L243">                System.out.println(&quot;  Undo successful. Removed order from queue: &quot; + order);</span>
+            } else {
+<span class="nc" id="L245">                System.out.println(&quot;  Undo attempted but order #&quot; + order.getOrderId()</span>
+                    + &quot; is no longer in the queue (already processed — cannot undo).&quot;);
+            }
+        }
+<span class="nc" id="L249">    }</span>
+
+    // ─── Private Helpers ───────────────────────────────────────────────────────
+
+    private void safeRollback(Connection conn) {
+<span class="nc bnc" id="L254" title="All 2 branches missed.">        if (conn != null) {</span>
+            try {
+<span class="nc" id="L256">                conn.rollback();</span>
+<span class="nc" id="L257">                System.err.println(&quot;  [ROLLBACK] Transaction rolled back.&quot;);</span>
+<span class="nc" id="L258">            } catch (SQLException ignored) {}</span>
+        }
+<span class="nc" id="L260">    }</span>
+
+    /**
+     * Re-enqueue a failed order if it has retry budget remaining.
+     *
+     * This prevents silent order loss on transient DB errors (e.g. lock timeout,
+     * network blip). Business-logic failures (insufficient stock, unknown product)
+     * must NOT call this — those orders are discarded intentionally.
+     *
+     * Retry count is tracked on the Order itself. After MAX_ORDER_RETRIES attempts
+     * the order is dropped and a warning is printed.
+     */
+    private void requeueIfRetriable(Order order) {
+<span class="nc" id="L273">        int retries = order.incrementRetries();</span>
+<span class="nc bnc" id="L274" title="All 2 branches missed.">        if (retries &lt;= MAX_ORDER_RETRIES) {</span>
+<span class="nc" id="L275">            queueManager.addOrder(order);</span>
+<span class="nc" id="L276">            System.err.println(&quot;  [REQUEUE] Order #&quot; + order.getOrderId()</span>
+                + &quot; re-enqueued (attempt &quot; + retries + &quot;/&quot; + MAX_ORDER_RETRIES + &quot;)&quot;);
+        } else {
+<span class="nc" id="L279">            System.err.println(&quot;  [DROP] Order #&quot; + order.getOrderId()</span>
+                + &quot; exceeded max retries (&quot; + MAX_ORDER_RETRIES + &quot;) — discarded.&quot;);
+        }
+<span class="nc" id="L282">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LRUProductCache.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">StockFlow Inventory Management System</a> &gt; <a href="index.source.html" class="el_package">dsa</a> &gt; <span class="el_source">LRUProductCache.java</span></div><h1>LRUProductCache.java</h1><pre class="source lang-java linenums">package dsa;
+
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+import model.Product;
+
+/**
+ * Bounded, thread-safe LRU (Least Recently Used) cache for Product lookups.
+ *
+ * Design:
+ *  - Backed by java.util.LinkedHashMap with accessOrder=true so every get()
+ *    moves the accessed entry to the tail of the internal doubly-linked list.
+ *  - removeEldestEntry() is overridden to evict the LRU (head) entry when
+ *    the cache exceeds MAX_CACHE_SIZE, giving O(1) amortised eviction.
+ *  - The map is wrapped with Collections.synchronizedMap() so all mutating
+ *    operations (get, put, remove) are serialised under the map's intrinsic lock,
+ *    making it safe for concurrent service-layer access.
+ *
+ * Replaces the original HashMap which had:
+ *  1. No eviction — unbounded memory growth.
+ *  2. productCache.clear() on every addProduct() — defeating the whole purpose.
+ *  3. No thread-safety — concurrent reads/writes corrupt HashMap state.
+ */
+public class LRUProductCache {
+
+    /** Maximum number of products to hold in memory before evicting the LRU entry. */
+    public static final int MAX_CACHE_SIZE = 500;
+
+    // synchronizedMap wraps all method calls in the map's intrinsic lock
+    private final Map&lt;Integer, Product&gt; cache;
+
+<span class="fc" id="L34">    public LRUProductCache() {</span>
+        // accessOrder=true: get() promotes entry to tail (most-recently-used position)
+<span class="fc" id="L36">        LinkedHashMap&lt;Integer, Product&gt; lhm = new LinkedHashMap&lt;&gt;(MAX_CACHE_SIZE, 0.75f, true) {</span>
+            @Override
+            protected boolean removeEldestEntry(Map.Entry&lt;Integer, Product&gt; eldest) {
+                // Evict the LRU head when capacity is exceeded — O(1)
+<span class="fc bfc" id="L40" title="All 2 branches covered.">                return size() &gt; MAX_CACHE_SIZE;</span>
+            }
+        };
+<span class="fc" id="L43">        this.cache = Collections.synchronizedMap(lhm);</span>
+<span class="fc" id="L44">    }</span>
+
+    /**
+     * Retrieve a product by ID. Returns null if not cached.
+     * Accessing an entry promotes it to MRU position (it won't be evicted next).
+     */
+    public Product get(int productId) {
+<span class="fc" id="L51">        return cache.get(productId);</span>
+    }
+
+    /**
+     * Insert or refresh a product in the cache.
+     * If cache is at capacity, the least-recently-used entry is silently evicted.
+     */
+    public void put(int productId, Product product) {
+<span class="fc" id="L59">        cache.put(productId, product);</span>
+<span class="fc" id="L60">    }</span>
+
+    /**
+     * Invalidate a single product entry (call on update/delete).
+     * Forces the next read to go to the DB and re-populate the cache.
+     */
+    public void invalidate(int productId) {
+<span class="fc" id="L67">        cache.remove(productId);</span>
+<span class="fc" id="L68">    }</span>
+
+    /**
+     * Flush the entire cache (call sparingly — only needed for bulk operations
+     * that affect many products simultaneously).
+     */
+    public void invalidateAll() {
+<span class="fc" id="L75">        cache.clear();</span>
+<span class="fc" id="L76">    }</span>
+
+    /** Returns current number of cached entries. */
+    public int size() {
+<span class="fc" id="L80">        return cache.size();</span>
+    }
+
+    public boolean containsKey(int productId) {
+<span class="fc" id="L84">        return cache.containsKey(productId);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

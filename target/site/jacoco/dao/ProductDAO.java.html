@@ -1,0 +1,273 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ProductDAO.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">StockFlow Inventory Management System</a> &gt; <a href="index.source.html" class="el_package">dao</a> &gt; <span class="el_source">ProductDAO.java</span></div><h1>ProductDAO.java</h1><pre class="source lang-java linenums">package dao;
+
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
+
+import database.DBConnection;
+import exception.ProductNotFoundException;
+import exception.TransactionExecutionException;
+import model.Product;
+import repository.ProductRepository;
+
+/**
+ * JDBC implementation of ProductRepository.
+ *
+ * Design Principles:
+ *  1. Repository Pattern: This class implements ProductRepository so the service
+ *     layer depends only on the interface, not on JDBC or MySQL specifics.
+ *
+ *  2. Connection Ownership:
+ *     - Standalone methods (no Connection param) acquire + close their own
+ *       pooled connection via try-with-resources.
+ *     - Transactional methods (with Connection param) are called by OrderService
+ *       mid-transaction and must NOT close or commit the connection.
+ *
+ *  3. Exception Strategy:
+ *     - SQLExceptions are wrapped in TransactionExecutionException (unchecked)
+ *       so the service layer gets typed domain failures, not raw SQL errors.
+ *     - findById() throws ProductNotFoundException instead of returning null.
+ *
+ *  4. deductStock(): Uses an atomic conditional UPDATE —
+ *       UPDATE products SET stock = stock - ? WHERE product_id = ? AND stock &gt;= ?
+ *     This is equivalent to a Compare-And-Swap at the database level. Even under
+ *     20 concurrent threads, at most ONE thread will successfully deduct stock
+ *     when only 1 unit remains — the rest get 0 affected rows → rollback.
+ */
+<span class="nc" id="L40">public class ProductDAO implements ProductRepository {</span>
+
+    // ─── Row Mapper ─────────────────────────────────────────────────────────────
+
+    private Product mapRow(ResultSet rs) throws SQLException {
+<span class="nc" id="L45">        Product p = new Product();</span>
+<span class="nc" id="L46">        p.setProductId(rs.getInt(&quot;product_id&quot;));</span>
+<span class="nc" id="L47">        p.setProductName(rs.getString(&quot;product_name&quot;));</span>
+<span class="nc" id="L48">        p.setCategory(rs.getString(&quot;category&quot;));</span>
+<span class="nc" id="L49">        p.setPrice(rs.getDouble(&quot;price&quot;));</span>
+<span class="nc" id="L50">        p.setStock(rs.getInt(&quot;stock&quot;));</span>
+<span class="nc" id="L51">        p.setMinimumStock(rs.getInt(&quot;minimum_stock&quot;));</span>
+<span class="nc" id="L52">        return p;</span>
+    }
+
+    // ─── ProductRepository Implementation ───────────────────────────────────────
+
+    @Override
+    public void save(Product product) {
+<span class="nc" id="L59">        String sql = &quot;INSERT INTO products(product_name, category, price, stock, minimum_stock) &quot;</span>
+                   + &quot;VALUES (?, ?, ?, ?, ?)&quot;;
+<span class="nc" id="L61">        try (Connection conn = DBConnection.getConnection();</span>
+<span class="nc" id="L62">             PreparedStatement ps = conn.prepareStatement(sql,</span>
+                     PreparedStatement.RETURN_GENERATED_KEYS)) {
+
+<span class="nc" id="L65">            ps.setString(1, product.getProductName());</span>
+<span class="nc" id="L66">            ps.setString(2, product.getCategory());</span>
+<span class="nc" id="L67">            ps.setDouble(3, product.getPrice());</span>
+<span class="nc" id="L68">            ps.setInt(4, product.getStock());</span>
+<span class="nc" id="L69">            ps.setInt(5, product.getMinimumStock());</span>
+
+<span class="nc" id="L71">            int rows = ps.executeUpdate();</span>
+<span class="nc bnc" id="L72" title="All 2 branches missed.">            if (rows == 0) {</span>
+<span class="nc" id="L73">                throw new TransactionExecutionException(&quot;INSERT into products affected 0 rows.&quot;);</span>
+            }
+            // Populate the auto-generated primary key so callers can use it immediately
+<span class="nc" id="L76">            try (ResultSet keys = ps.getGeneratedKeys()) {</span>
+<span class="nc bnc" id="L77" title="All 2 branches missed.">                if (keys.next()) {</span>
+<span class="nc" id="L78">                    product.setProductId(keys.getInt(1));</span>
+                }
+            }
+<span class="nc" id="L81">        } catch (SQLException e) {</span>
+<span class="nc" id="L82">            throw new TransactionExecutionException(&quot;Failed to save product: &quot; + e.getMessage(), e);</span>
+<span class="nc" id="L83">        }</span>
+<span class="nc" id="L84">    }</span>
+
+    @Override
+    public void update(Product product) {
+<span class="nc" id="L88">        String sql = &quot;UPDATE products SET product_name=?, category=?, price=?, minimum_stock=? &quot;</span>
+                   + &quot;WHERE product_id=?&quot;;
+<span class="nc" id="L90">        try (Connection conn = DBConnection.getConnection();</span>
+<span class="nc" id="L91">             PreparedStatement ps = conn.prepareStatement(sql)) {</span>
+
+<span class="nc" id="L93">            ps.setString(1, product.getProductName());</span>
+<span class="nc" id="L94">            ps.setString(2, product.getCategory());</span>
+<span class="nc" id="L95">            ps.setDouble(3, product.getPrice());</span>
+<span class="nc" id="L96">            ps.setInt(4, product.getMinimumStock());</span>
+<span class="nc" id="L97">            ps.setInt(5, product.getProductId());</span>
+
+<span class="nc" id="L99">            int rows = ps.executeUpdate();</span>
+<span class="nc bnc" id="L100" title="All 2 branches missed.">            if (rows == 0) {</span>
+<span class="nc" id="L101">                throw new ProductNotFoundException(product.getProductId());</span>
+            }
+<span class="nc" id="L103">        } catch (SQLException e) {</span>
+<span class="nc" id="L104">            throw new TransactionExecutionException(&quot;Failed to update product: &quot; + e.getMessage(), e);</span>
+<span class="nc" id="L105">        }</span>
+<span class="nc" id="L106">    }</span>
+
+    @Override
+    public void delete(int productId) {
+<span class="nc" id="L110">        String sql = &quot;DELETE FROM products WHERE product_id = ?&quot;;</span>
+<span class="nc" id="L111">        try (Connection conn = DBConnection.getConnection();</span>
+<span class="nc" id="L112">             PreparedStatement ps = conn.prepareStatement(sql)) {</span>
+
+<span class="nc" id="L114">            ps.setInt(1, productId);</span>
+<span class="nc" id="L115">            int rows = ps.executeUpdate();</span>
+<span class="nc bnc" id="L116" title="All 2 branches missed.">            if (rows == 0) {</span>
+<span class="nc" id="L117">                throw new ProductNotFoundException(productId);</span>
+            }
+<span class="nc" id="L119">        } catch (SQLException e) {</span>
+<span class="nc" id="L120">            throw new TransactionExecutionException(&quot;Failed to delete product #&quot; + productId, e);</span>
+<span class="nc" id="L121">        }</span>
+<span class="nc" id="L122">    }</span>
+
+    @Override
+    public Product findById(int productId) {
+<span class="nc" id="L126">        String sql = &quot;SELECT * FROM products WHERE product_id = ?&quot;;</span>
+<span class="nc" id="L127">        try (Connection conn = DBConnection.getConnection();</span>
+<span class="nc" id="L128">             PreparedStatement ps = conn.prepareStatement(sql)) {</span>
+
+<span class="nc" id="L130">            ps.setInt(1, productId);</span>
+<span class="nc" id="L131">            try (ResultSet rs = ps.executeQuery()) {</span>
+<span class="nc bnc" id="L132" title="All 2 branches missed.">                if (rs.next()) {</span>
+<span class="nc" id="L133">                    return mapRow(rs);</span>
+                }
+<span class="nc bnc" id="L135" title="All 2 branches missed.">            }</span>
+<span class="nc bnc" id="L136" title="All 4 branches missed.">        } catch (SQLException e) {</span>
+<span class="nc" id="L137">            throw new TransactionExecutionException(&quot;Failed to fetch product #&quot; + productId, e);</span>
+<span class="nc" id="L138">        }</span>
+<span class="nc" id="L139">        throw new ProductNotFoundException(productId);</span>
+    }
+
+    @Override
+    public List&lt;Product&gt; findAll() {
+<span class="nc" id="L144">        List&lt;Product&gt; products = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L145">        String sql = &quot;SELECT * FROM products ORDER BY product_id&quot;;</span>
+<span class="nc" id="L146">        try (Connection conn = DBConnection.getConnection();</span>
+<span class="nc" id="L147">             PreparedStatement ps = conn.prepareStatement(sql);</span>
+<span class="nc" id="L148">             ResultSet rs = ps.executeQuery()) {</span>
+
+<span class="nc bnc" id="L150" title="All 2 branches missed.">            while (rs.next()) {</span>
+<span class="nc" id="L151">                products.add(mapRow(rs));</span>
+            }
+<span class="nc" id="L153">        } catch (SQLException e) {</span>
+<span class="nc" id="L154">            throw new TransactionExecutionException(&quot;Failed to fetch all products: &quot; + e.getMessage(), e);</span>
+<span class="nc" id="L155">        }</span>
+<span class="nc" id="L156">        return products;</span>
+    }
+
+    @Override
+    public List&lt;Product&gt; findByNameLike(String keyword) {
+<span class="nc" id="L161">        List&lt;Product&gt; results = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L162">        String sql = &quot;SELECT * FROM products WHERE product_name LIKE ?&quot;;</span>
+<span class="nc" id="L163">        try (Connection conn = DBConnection.getConnection();</span>
+<span class="nc" id="L164">             PreparedStatement ps = conn.prepareStatement(sql)) {</span>
+
+<span class="nc" id="L166">            ps.setString(1, &quot;%&quot; + keyword + &quot;%&quot;);</span>
+<span class="nc" id="L167">            try (ResultSet rs = ps.executeQuery()) {</span>
+<span class="nc bnc" id="L168" title="All 2 branches missed.">                while (rs.next()) {</span>
+<span class="nc" id="L169">                    results.add(mapRow(rs));</span>
+                }
+            }
+<span class="nc" id="L172">        } catch (SQLException e) {</span>
+<span class="nc" id="L173">            throw new TransactionExecutionException(&quot;Failed to search by name: &quot; + e.getMessage(), e);</span>
+<span class="nc" id="L174">        }</span>
+<span class="nc" id="L175">        return results;</span>
+    }
+
+    @Override
+    public List&lt;Product&gt; findLowStock() {
+<span class="nc" id="L180">        List&lt;Product&gt; results = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L181">        String sql = &quot;SELECT * FROM products WHERE stock &lt;= minimum_stock ORDER BY stock ASC&quot;;</span>
+<span class="nc" id="L182">        try (Connection conn = DBConnection.getConnection();</span>
+<span class="nc" id="L183">             PreparedStatement ps = conn.prepareStatement(sql);</span>
+<span class="nc" id="L184">             ResultSet rs = ps.executeQuery()) {</span>
+
+<span class="nc bnc" id="L186" title="All 2 branches missed.">            while (rs.next()) {</span>
+<span class="nc" id="L187">                results.add(mapRow(rs));</span>
+            }
+<span class="nc" id="L189">        } catch (SQLException e) {</span>
+<span class="nc" id="L190">            throw new TransactionExecutionException(&quot;Failed to fetch low-stock products: &quot; + e.getMessage(), e);</span>
+<span class="nc" id="L191">        }</span>
+<span class="nc" id="L192">        return results;</span>
+    }
+
+    /**
+     * Atomic conditional stock deduction — TRANSACTIONAL, caller owns Connection.
+     *
+     * SQL: UPDATE products SET stock = stock - ? WHERE product_id = ? AND stock &gt;= ?
+     *
+     * The WHERE stock &gt;= ? clause is the critical guard:
+     *  - Under REPEATABLE_READ isolation, row-level write locks prevent two
+     *    concurrent transactions from both seeing stock=1 and both deducting.
+     *  - Only the first committing transaction passes; the second sees 0 rows
+     *    updated → returns false → OrderService rolls back and throws InsufficientStockException.
+     *
+     * IMPORTANT: Does NOT close conn — caller is mid-transaction.
+     */
+    @Override
+    public boolean deductStock(Connection conn, int productId, int quantity) {
+<span class="nc" id="L210">        String sql = &quot;UPDATE products SET stock = stock - ? &quot;</span>
+                   + &quot;WHERE product_id = ? AND stock &gt;= ?&quot;;
+<span class="nc" id="L212">        try (PreparedStatement ps = conn.prepareStatement(sql)) {</span>
+<span class="nc" id="L213">            ps.setInt(1, quantity);</span>
+<span class="nc" id="L214">            ps.setInt(2, productId);</span>
+<span class="nc" id="L215">            ps.setInt(3, quantity);</span>
+<span class="nc bnc" id="L216" title="All 2 branches missed.">            return ps.executeUpdate() &gt; 0;</span>
+<span class="nc" id="L217">        } catch (SQLException e) {</span>
+<span class="nc" id="L218">            throw new TransactionExecutionException(</span>
+                &quot;Stock deduction failed for product #&quot; + productId, e);
+        }
+    }
+
+    /**
+     * Absolute stock assignment (used by restock operations — not transactional).
+     * Acquires and releases its own connection from the pool.
+     */
+    @Override
+    public void updateStock(int productId, int newStock) {
+<span class="nc" id="L229">        String sql = &quot;UPDATE products SET stock = ? WHERE product_id = ?&quot;;</span>
+<span class="nc" id="L230">        try (Connection conn = DBConnection.getConnection();</span>
+<span class="nc" id="L231">             PreparedStatement ps = conn.prepareStatement(sql)) {</span>
+
+<span class="nc" id="L233">            ps.setInt(1, newStock);</span>
+<span class="nc" id="L234">            ps.setInt(2, productId);</span>
+<span class="nc" id="L235">            int rows = ps.executeUpdate();</span>
+<span class="nc bnc" id="L236" title="All 2 branches missed.">            if (rows == 0) {</span>
+<span class="nc" id="L237">                throw new ProductNotFoundException(productId);</span>
+            }
+<span class="nc" id="L239">        } catch (SQLException e) {</span>
+<span class="nc" id="L240">            throw new TransactionExecutionException(&quot;Failed to update stock for #&quot; + productId, e);</span>
+<span class="nc" id="L241">        }</span>
+<span class="nc" id="L242">    }</span>
+
+    // ─── Package-private helper for BenchmarkRunner batch insert ───────────────
+
+    /**
+     * Batch-insert multiple products in a single prepared statement execution.
+     * Used exclusively by BenchmarkRunner for seeding test data efficiently.
+     */
+    public void batchInsert(List&lt;Product&gt; products) {
+<span class="nc" id="L251">        String sql = &quot;INSERT INTO products(product_name, category, price, stock, minimum_stock) &quot;</span>
+                   + &quot;VALUES (?, ?, ?, ?, ?)&quot;;
+<span class="nc" id="L253">        try (Connection conn = DBConnection.getConnection();</span>
+<span class="nc" id="L254">             PreparedStatement ps = conn.prepareStatement(sql)) {</span>
+
+<span class="nc" id="L256">            conn.setAutoCommit(false);</span>
+<span class="nc bnc" id="L257" title="All 2 branches missed.">            for (Product p : products) {</span>
+<span class="nc" id="L258">                ps.setString(1, p.getProductName());</span>
+<span class="nc" id="L259">                ps.setString(2, p.getCategory());</span>
+<span class="nc" id="L260">                ps.setDouble(3, p.getPrice());</span>
+<span class="nc" id="L261">                ps.setInt(4, p.getStock());</span>
+<span class="nc" id="L262">                ps.setInt(5, p.getMinimumStock());</span>
+<span class="nc" id="L263">                ps.addBatch();</span>
+<span class="nc" id="L264">            }</span>
+<span class="nc" id="L265">            ps.executeBatch();</span>
+<span class="nc" id="L266">            conn.commit();</span>
+<span class="nc" id="L267">            conn.setAutoCommit(true);</span>
+<span class="nc" id="L268">        } catch (SQLException e) {</span>
+<span class="nc" id="L269">            throw new TransactionExecutionException(&quot;Batch insert failed: &quot; + e.getMessage(), e);</span>
+<span class="nc" id="L270">        }</span>
+<span class="nc" id="L271">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>
