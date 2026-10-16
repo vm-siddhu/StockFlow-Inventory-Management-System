@@ -1,4 +1,4 @@
-import dsa.ProductBST;
+import dsa.ProductAvlTree;
 import model.Product;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -14,7 +14,7 @@ import java.util.stream.Collectors;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Unit tests for ProductBST.
+ * Unit tests for ProductAvlTree.
  *
  * The key scenario is products with repeated prices — the original price-only
  * key caused range-search misses in that case. These tests verify:
@@ -23,9 +23,9 @@ import static org.junit.jupiter.api.Assertions.*;
  *  3. delete() is truly O(log n): the deleted product is gone and all others survive.
  *  4. Results match a naive linear scan on the same data (oracle comparison).
  */
-class ProductBSTTest {
+class ProductAvlTreeTest {
 
-    private ProductBST bst;
+    private ProductAvlTree bst;
     private static final Random RNG = new Random(42);
 
     /** Build a Product with a given id and price (stock/category don't matter here). */
@@ -34,7 +34,7 @@ class ProductBSTTest {
     }
 
     @BeforeEach
-    void fresh() { bst = new ProductBST(); }
+    void fresh() { bst = new ProductAvlTree(); }
 
     // -----------------------------------------------------------------------
     // Basic correctness
@@ -44,6 +44,27 @@ class ProductBSTTest {
     @DisplayName("Empty tree returns empty list")
     void emptyTree() {
         assertTrue(bst.searchByPriceRange(0, 999).isEmpty());
+    }
+
+    @Test
+    @DisplayName("Invalid ranges and non-finite prices are rejected")
+    void rejectsInvalidRanges() {
+        assertThrows(IllegalArgumentException.class, () -> bst.searchByPriceRange(10, 1));
+        assertThrows(IllegalArgumentException.class, () -> bst.searchByPriceRange(Double.NaN, 1));
+        assertThrows(IllegalArgumentException.class, () -> bst.searchByPriceRange(0, Double.POSITIVE_INFINITY));
+        assertThrows(IllegalArgumentException.class, () -> bst.insert(p(1, Double.NaN)));
+        assertThrows(IllegalArgumentException.class, () -> bst.insert(null));
+    }
+
+    @Test
+    @DisplayName("Inserting the same composite key replaces the stored product")
+    void duplicateCompositeKeyReplacesProduct() {
+        bst.insert(p(7, 25.0));
+        Product replacement = new Product(7, "updated", "CAT", 25.0, 8, 1);
+        bst.insert(replacement);
+        List<Product> matches = bst.searchByPriceRange(25.0, 25.0);
+        assertEquals(1, matches.size());
+        assertSame(replacement, matches.get(0));
     }
 
     @Test

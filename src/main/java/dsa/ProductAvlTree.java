@@ -19,10 +19,10 @@ import model.Product;
  *  Appending productId makes every key globally unique, so every operation
  *  follows a single root-to-leaf path.
  *
- * Thread-Safety: NOT internally synchronized.
- * InventoryService wraps all access with a ReentrantReadWriteLock.
+ * Thread-Safety: NOT internally synchronized. InventoryService synchronizes
+ * the methods that read or update this index.
  */
-public class ProductBST {
+public class ProductAvlTree {
 
     private static class Node {
         Product product;
@@ -35,7 +35,12 @@ public class ProductBST {
 
     /** Insert a product. O(log n). */
     public void insert(Product product) {
-        if (product == null) return;
+        if (product == null) {
+            throw new IllegalArgumentException("Product cannot be null");
+        }
+        if (!Double.isFinite(product.getPrice())) {
+            throw new IllegalArgumentException("Product price must be finite");
+        }
         root = insertRec(root, product);
     }
 
@@ -47,6 +52,7 @@ public class ProductBST {
      * price (e.g. productRepository.findById(id)).
      */
     public void delete(double price, int productId) {
+        requireFinitePrice(price);
         root = deleteRec(root, price, productId);
     }
 
@@ -59,6 +65,11 @@ public class ProductBST {
      *  otherwise       -> collect node, recurse both children.
      */
     public List<Product> searchByPriceRange(double minPrice, double maxPrice) {
+        requireFinitePrice(minPrice);
+        requireFinitePrice(maxPrice);
+        if (minPrice > maxPrice) {
+            throw new IllegalArgumentException("Minimum price cannot exceed maximum price");
+        }
         List<Product> results = new ArrayList<>();
         rangeSearchRec(root, minPrice, maxPrice, results);
         return results;
@@ -183,4 +194,10 @@ public class ProductBST {
     private void updateHeight(Node n)  { n.height = 1 + Math.max(height(n.left), height(n.right)); }
     private int  balanceFactor(Node n) { return n == null ? 0 : height(n.left) - height(n.right); }
     private Node findMin(Node n)       { while (n.left != null) n = n.left; return n; }
+
+    private void requireFinitePrice(double price) {
+        if (!Double.isFinite(price)) {
+            throw new IllegalArgumentException("Price must be finite");
+        }
+    }
 }

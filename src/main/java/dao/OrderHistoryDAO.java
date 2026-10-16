@@ -43,16 +43,15 @@ public class OrderHistoryDAO implements OrderRepository {
     @Override
     public void save(Order order, Connection conn) {
         String sql = "INSERT INTO order_history"
-                   + "(order_id, customer_name, product_id, quantity, priority, status, processed_time) "
-                   + "VALUES (?, ?, ?, ?, ?, ?, ?)";
+                   + "(order_id, customer_name, product_id, quantity, status, processed_time) "
+                   + "VALUES (?, ?, ?, ?, ?, ?)";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setInt(1, order.getOrderId());
+            ps.setString(1, order.getOrderId());
             ps.setString(2, order.getCustomerName());
             ps.setInt(3, order.getProductId());
             ps.setInt(4, order.getQuantity());
-            ps.setInt(5, order.getPriority());
-            ps.setString(6, "PROCESSED");
-            ps.setTimestamp(7, new Timestamp(System.currentTimeMillis()));
+            ps.setString(5, "PROCESSED");
+            ps.setTimestamp(6, new Timestamp(System.currentTimeMillis()));
             ps.executeUpdate();
         } catch (SQLException e) {
             // Throw — OrderService catch block will rollback the entire transaction
@@ -75,11 +74,10 @@ public class OrderHistoryDAO implements OrderRepository {
 
             while (rs.next()) {
                 Order o = new Order();
-                o.setOrderId(rs.getInt("order_id"));
+                o.setOrderId(rs.getString("order_id"));
                 o.setCustomerName(rs.getString("customer_name"));
                 o.setProductId(rs.getInt("product_id"));
                 o.setQuantity(rs.getInt("quantity"));
-                o.setPriority(rs.getInt("priority"));
                 history.add(o);
             }
         } catch (SQLException e) {

@@ -54,9 +54,6 @@ public interface ProductRepository {
      */
     boolean deductStock(Connection conn, int productId, int quantity);
 
-    /**
-     * Simple absolute stock assignment (used by restock / admin operations).
-     * Opens and closes its own connection from the pool.
-     */
-    void updateStock(int productId, int newStock);
+    /** Atomically add a positive quantity to the current stock. */
+    void increaseStock(int productId, int quantity);
 }

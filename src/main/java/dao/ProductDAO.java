@@ -220,24 +220,17 @@ public class ProductDAO implements ProductRepository {
         }
     }
 
-    /**
-     * Absolute stock assignment (used by restock operations — not transactional).
-     * Acquires and releases its own connection from the pool.
-     */
     @Override
-    public void updateStock(int productId, int newStock) {
-        String sql = "UPDATE products SET stock = ? WHERE product_id = ?";
+    public void increaseStock(int productId, int quantity) {
+        if (quantity <= 0) throw new IllegalArgumentException("Quantity must be greater than zero");
+        String sql = "UPDATE products SET stock = stock + ? WHERE product_id = ?";
         try (Connection conn = DBConnection.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
-
-            ps.setInt(1, newStock);
+            ps.setInt(1, quantity);
             ps.setInt(2, productId);
-            int rows = ps.executeUpdate();
-            if (rows == 0) {
-                throw new ProductNotFoundException(productId);
-            }
+            if (ps.executeUpdate() == 0) throw new ProductNotFoundException(productId);
         } catch (SQLException e) {
-            throw new TransactionExecutionException("Failed to update stock for #" + productId, e);
+            throw new TransactionExecutionException("Failed to restock product #" + productId, e);
         }
     }
 
@@ -253,18 +246,28 @@ public class ProductDAO implements ProductRepository {
         try (Connection conn = DBConnection.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
 
+            boolean originalAutoCommit = conn.getAutoCommit();
             conn.setAutoCommit(false);
-            for (Product p : products) {
-                ps.setString(1, p.getProductName());
-                ps.setString(2, p.getCategory());
-                ps.setDouble(3, p.getPrice());
-                ps.setInt(4, p.getStock());
-                ps.setInt(5, p.getMinimumStock());
-                ps.addBatch();
+            try {
+                for (Product p : products) {
+                    ps.setString(1, p.getProductName());
+                    ps.setString(2, p.getCategory());
+                    ps.setDouble(3, p.getPrice());
+                    ps.setInt(4, p.getStock());
+                    ps.setInt(5, p.getMinimumStock());
+                    ps.addBatch();
+                }
+                ps.executeBatch();
+                conn.commit();
+                conn.setAutoCommit(originalAutoCommit);
+            } catch (SQLException failure) {
+                try {
+                    conn.rollback();
+                } catch (SQLException rollbackFailure) {
+                    failure.addSuppressed(rollbackFailure);
+                }
+                throw failure;
             }
-            ps.executeBatch();
-            conn.commit();
-            conn.setAutoCommit(true);
         } catch (SQLException e) {
             throw new TransactionExecutionException("Batch insert failed: " + e.getMessage(), e);
         }

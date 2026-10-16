@@ -1,240 +1,104 @@
 package service;
 
 import java.util.List;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 
 import dao.ProductDAO;
-import dsa.LRUProductCache;
-import dsa.ProductBST;
-import exception.InsufficientStockException;
-import exception.ProductNotFoundException;
+import dsa.ProductAvlTree;
 import model.Product;
 import repository.ProductRepository;
 
-/**
- * Inventory management service — persistent AVL index + LRU cache.
- *
- * Two key performance improvements over the original:
- *
- * ① Persistent AVL Tree Index:
- *   - The original code rebuilt a brand-new ProductBST from a full DB SELECT
- *     on EVERY filterByPrice() call → O(n log n) cold rebuild per query.
- *   - Now: a single ProductBST is maintained as a persistent field.
- *     add/update/delete operations update the tree incrementally.
- *     filterByPrice() queries the in-memory tree directly → O(k + log n), zero DB I/O.
- *
- * ② LRU Product Cache:
- *   - The original HashMap had no eviction and called cache.clear() on every
- *     addProduct() — destroying all cached entries on every write.
- *   - Now: bounded LRU cache (500 entries). Eviction is per-entry and LRU-based.
- *     Writes only invalidate the specific affected entry.
- *
- * Thread-Safety (ReentrantReadWriteLock):
- *   - Multiple concurrent reads (filterByPrice, searchById) acquire the READ lock
- *     simultaneously — they never block each other.
- *   - Writes (add, update, delete, restock) acquire the WRITE lock exclusively.
- *   - This is superior to a single synchronized block which serializes reads.
- */
+/** Coordinates product rules and the in-memory price index. */
 public class InventoryService {
 
-    private final ProductRepository productRepository;
+    private final ProductRepository products;
+    private final ProductAvlTree priceIndex = new ProductAvlTree();
 
-    // LRU Cache: bounded, thread-safe, O(1) get/put/evict
-    private final LRUProductCache productCache = new LRUProductCache();
-
-    // Persistent AVL Tree: maintained incrementally across all mutations
-    private final ProductBST       priceIndex   = new ProductBST();
-
-    // ReentrantReadWriteLock: multiple concurrent readers, exclusive writer
-    private final ReentrantReadWriteLock rwLock = new ReentrantReadWriteLock();
-    private final ReentrantReadWriteLock.ReadLock  readLock  = rwLock.readLock();
-    private final ReentrantReadWriteLock.WriteLock writeLock = rwLock.writeLock();
-
-    // Flag to track whether the BST has been initialized from DB on first use
-    private volatile boolean bstInitialized = false;
-
+    /** The startup wiring constructor uses MySQL persistence. */
     public InventoryService() {
-        this.productRepository = new ProductDAO();
+        this(new ProductDAO());
     }
 
-    /**
-     * Constructor-injection overload — for unit tests that supply a fake repository.
-     */
-    public InventoryService(ProductRepository productRepository) {
-        this.productRepository = productRepository;
-    }
-
-    // ─── BST Lazy Initialization ────────────────────────────────────────────────
-
-    /**
-     * Load all products from DB into the AVL tree exactly once.
-     * Uses double-checked locking to avoid redundant DB queries under concurrency.
-     * Called lazily on first filterByPrice() invocation.
-     */
-    private void initBSTIfNeeded() {
-        if (!bstInitialized) {
-            writeLock.lock();
-            try {
-                if (!bstInitialized) {  // double-check inside write lock
-                    List<Product> all = productRepository.findAll();
-                    for (Product p : all) {
-                        priceIndex.insert(p);
-                    }
-                    bstInitialized = true;
-                }
-            } finally {
-                writeLock.unlock();
-            }
-        }
-    }
-
-    // ─── CRUD Operations ────────────────────────────────────────────────────────
-
-    /**
-     * Add a new product — persists to DB, then updates in-memory structures.
-     * Throws TransactionExecutionException on DB failure.
-     */
-    public void addProduct(Product product) {
-        productRepository.save(product);  // throws on failure; also populates product.productId
-        writeLock.lock();
-        try {
-            // ProductDAO.save() now uses getGeneratedKeys to fill in product.productId,
-            // so we can insert directly without a full table re-scan.
+    /** Repository injection keeps inventory behavior independently testable. */
+    public InventoryService(ProductRepository products) {
+        this.products = products;
+        // Load once at construction so every range query starts from database state.
+        for (Product product : products.findAll()) {
             priceIndex.insert(product);
-            productCache.put(product.getProductId(), product);
-        } finally {
-            writeLock.unlock();
         }
     }
 
-    /**
-     * Update product metadata — removes old BST node (old price key), inserts updated node.
-     * Throws ProductNotFoundException if ID does not exist.
-     */
-    public void updateProduct(Product product) {
-        // Fetch old version to get its price (needed for AVL deletion by composite key)
-        Product existing = productRepository.findById(product.getProductId()); // throws if not found
-        productRepository.update(product);
-
-        writeLock.lock();
-        try {
-            // Delete using (oldPrice, productId) — the composite key that locates
-            // the node in O(log n). Then re-insert at the new price.
-            priceIndex.delete(existing.getPrice(), existing.getProductId());
-            priceIndex.insert(product);
-            productCache.put(product.getProductId(), product);
-        } finally {
-            writeLock.unlock();
-        }
+    public synchronized void addProduct(Product product) {
+        requireValidProduct(product);
+        product.setPrice(toDatabasePrice(product.getPrice()));
+        products.save(product);
+        priceIndex.insert(product);
     }
 
-    /**
-     * Delete a product — removes from DB, BST, and cache.
-     * Throws ProductNotFoundException if the product does not exist.
-     */
-    public void deleteProduct(int productId) {
-        // Fetch the product first to get its price for the composite AVL key.
-        // findById throws ProductNotFoundException if the product is already gone.
-        Product existing = productRepository.findById(productId);
-        productRepository.delete(productId);
-        writeLock.lock();
-        try {
-            priceIndex.delete(existing.getPrice(), existing.getProductId());
-            productCache.invalidate(productId);
-        } finally {
-            writeLock.unlock();
-        }
+    public synchronized void updateProduct(Product product) {
+        requireValidProduct(product);
+        product.setPrice(toDatabasePrice(product.getPrice()));
+        Product old = products.findById(product.getProductId());
+        products.update(product);
+        priceIndex.delete(old.getPrice(), old.getProductId());
+        priceIndex.insert(product);
     }
 
-    /** Fetch full product list from DB — no caching (always fresh). */
+    public synchronized void deleteProduct(int productId) {
+        Product old = products.findById(productId);
+        products.delete(productId);
+        priceIndex.delete(old.getPrice(), old.getProductId());
+    }
+
     public List<Product> viewInventory() {
-        return productRepository.findAll();
+        return products.findAll();
     }
 
-    /**
-     * LRU cache-assisted product lookup.
-     * Cache hit: O(1), no DB I/O.
-     * Cache miss: fetches from DB, populates cache for future hits.
-     * Throws ProductNotFoundException if the product doesn't exist.
-     */
     public Product searchById(int productId) {
-        readLock.lock();
-        try {
-            Product cached = productCache.get(productId);
-            if (cached != null) return cached;
-        } finally {
-            readLock.unlock();
-        }
-
-        // Cache miss — fetch from DB (throws ProductNotFoundException if absent)
-        Product product = productRepository.findById(productId);
-        writeLock.lock();
-        try {
-            productCache.put(productId, product);
-        } finally {
-            writeLock.unlock();
-        }
-        return product;
+        return products.findById(productId);
     }
 
     public List<Product> searchByName(String keyword) {
-        return productRepository.findByNameLike(keyword);
+        return products.findByNameLike(keyword);
     }
 
-    /**
-     * Restock a product — fetches current stock, adds quantity, persists and updates cache.
-     * Throws ProductNotFoundException if productId is invalid.
-     */
     public void restockProduct(int productId, int quantity) {
-        Product product = productRepository.findById(productId); // throws if not found
-        int newStock    = product.getStock() + quantity;
-        productRepository.updateStock(productId, newStock);
-
-        writeLock.lock();
-        try {
-            product.setStock(newStock);
-            productCache.put(productId, product);
-            // BST is keyed by price — restock doesn't change price, no BST update needed
-        } finally {
-            writeLock.unlock();
+        if (quantity <= 0) {
+            throw new IllegalArgumentException("Restock quantity must be greater than zero");
         }
+        products.increaseStock(productId, quantity);
     }
 
     public List<Product> getLowStockProducts() {
-        return productRepository.findLowStock();
+        return products.findLowStock();
     }
 
-    /**
-     * Price range filter — queries the persistent in-memory AVL tree.
-     *
-     * Zero DB round-trips after initial load. Complexity: O(k + log n).
-     * Results are pruned at tree traversal time — no post-filter needed.
-     */
-    public List<Product> filterByPrice(double min, double max) {
-        initBSTIfNeeded();  // lazy-load on first call only
-        readLock.lock();
-        try {
-            return priceIndex.searchByPriceRange(min, max);
-        } finally {
-            readLock.unlock();
+    public synchronized List<Product> filterByPrice(double min, double max) {
+        return priceIndex.searchByPriceRange(min, max);
+    }
+
+    private void requireValidProduct(Product product) {
+        if (product == null) throw new IllegalArgumentException("Product cannot be null");
+        if (product.getProductName() == null || product.getProductName().isBlank()) {
+            throw new IllegalArgumentException("Product name cannot be blank");
+        }
+        if (product.getCategory() == null || product.getCategory().isBlank()) {
+            throw new IllegalArgumentException("Category cannot be blank");
+        }
+        if (!Double.isFinite(product.getPrice()) || product.getPrice() <= 0) {
+            throw new IllegalArgumentException("Product price must be finite and greater than zero");
+        }
+        if (product.getStock() < 0 || product.getMinimumStock() < 0) {
+            throw new IllegalArgumentException("Stock values cannot be negative");
         }
     }
 
-    /**
-     * Evict a single entry from the LRU cache.
-     *
-     * Called by OrderService after a successful stock-deduction commit so that
-     * the next searchById() call goes to the DB and sees the updated stock count
-     * instead of a stale cached value.
-     *
-     * Thread-safe: LRUProductCache.invalidate() is backed by a synchronizedMap.
-     */
-    public void invalidateProductCache(int productId) {
-        writeLock.lock();
-        try {
-            productCache.invalidate(productId);
-        } finally {
-            writeLock.unlock();
+    private double toDatabasePrice(double price) {
+        double rounded = BigDecimal.valueOf(price).setScale(2, RoundingMode.HALF_UP).doubleValue();
+        if (rounded <= 0) {
+            throw new IllegalArgumentException("Price must round to at least 0.01");
         }
+        return rounded;
     }
 }

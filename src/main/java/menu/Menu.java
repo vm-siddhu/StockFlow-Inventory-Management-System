@@ -2,6 +2,7 @@ package menu;
 
 import java.util.List;
 import java.util.Scanner;
+import java.util.NoSuchElementException;
 
 import dsa.QueueManager;
 import exception.InsufficientStockException;
@@ -28,19 +29,12 @@ public class Menu {
     private final QueueManager     queueManager     = new QueueManager();
     private final OrderService     orderService     = new OrderService(queueManager);
 
-    public Menu() {
-        // Wire InventoryService into OrderService so that a successful stock
-        // deduction also evicts the LRU cache entry — prevents stale stock reads.
-        orderService.setInventoryService(inventoryService);
-    }
-
     // ─── Input Helpers ──────────────────────────────────────────────────────────
 
     private int readInt(String prompt) {
         while (true) {
-            System.out.print(prompt);
             try {
-                return Integer.parseInt(sc.nextLine().trim());
+                return Integer.parseInt(readLine(prompt).trim());
             } catch (NumberFormatException e) {
                 System.out.println("  Invalid input. Please enter a whole number.");
             }
@@ -55,13 +49,20 @@ public class Menu {
         }
     }
 
+    private int readNonNegativeInt(String prompt) {
+        while (true) {
+            int value = readInt(prompt);
+            if (value >= 0) return value;
+            System.out.println("  Value must be zero or greater.");
+        }
+    }
+
     private double readPositiveDouble(String prompt) {
         while (true) {
-            System.out.print(prompt);
             try {
-                double value = Double.parseDouble(sc.nextLine().trim());
-                if (value > 0) return value;
-                System.out.println("  Value must be greater than zero.");
+                double value = Double.parseDouble(readLine(prompt).trim());
+                if (Double.isFinite(value) && value > 0) return value;
+                System.out.println("  Enter a finite number greater than zero.");
             } catch (NumberFormatException e) {
                 System.out.println("  Invalid input. Please enter a valid number.");
             }
@@ -70,11 +71,10 @@ public class Menu {
 
     private double readNonNegativeDouble(String prompt) {
         while (true) {
-            System.out.print(prompt);
             try {
-                double value = Double.parseDouble(sc.nextLine().trim());
-                if (value >= 0) return value;
-                System.out.println("  Value must be zero or greater.");
+                double value = Double.parseDouble(readLine(prompt).trim());
+                if (Double.isFinite(value) && value >= 0) return value;
+                System.out.println("  Enter a finite number zero or greater.");
             } catch (NumberFormatException e) {
                 System.out.println("  Invalid input. Please enter a valid number.");
             }
@@ -83,74 +83,83 @@ public class Menu {
 
     private String readString(String prompt) {
         while (true) {
-            System.out.print(prompt);
-            String input = sc.nextLine().trim();
+            String input = readLine(prompt).trim();
             if (!input.isEmpty()) return input;
             System.out.println("  Input cannot be empty. Try again.");
         }
     }
 
+    private String readLine(String prompt) {
+        System.out.print(prompt);
+        if (!sc.hasNextLine()) throw new NoSuchElementException("Console input ended");
+        return sc.nextLine();
+    }
+
     // ─── Main Loop ──────────────────────────────────────────────────────────────
 
     public void start() {
-        System.out.println("\n  Welcome to StockFlow – Inventory Management System");
+        System.out.println("\n  Welcome to StockFlow - Inventory Management System");
         while (true) {
-            printMenu();
-            int choice = readInt("  Choose: ");
-            switch (choice) {
-                case 1:  handleAddProduct();                break;
-                case 2:  handleViewInventory();             break;
-                case 3:  handleSearchById();                break;
-                case 4:  handleSearchByName();              break;
-                case 5:  handleUpdateProduct();             break;
-                case 6:  handleDeleteProduct();             break;
-                case 7:  handleRestockProduct();            break;
-                case 8:  handleLowStockReport();            break;
-                case 9:  handlePlaceOrder(0);               break;
-                case 10: handlePlaceOrder(1);               break;
-                case 11: handleProcessNextOrder();          break;
-                case 12: orderService.viewPendingOrders();  break;
-                case 13: handleViewOrderHistory();          break;
-                case 14: handlePriceRangeSearch();          break;
-                case 15: handleUndoLastAction();            break;
-                case 0:
-                    System.out.println("\n  StockFlow shut down. Goodbye.");
-                    return;
-                default:
-                    System.out.println("  Invalid choice. Try again.");
+            try {
+                printMenu();
+                int choice = readInt("  Choose: ");
+                switch (choice) {
+                    case 1:  handleAddProduct();                break;
+                    case 2:  handleViewInventory();             break;
+                    case 3:  handleSearchById();                break;
+                    case 4:  handleSearchByName();              break;
+                    case 5:  handleUpdateProduct();             break;
+                    case 6:  handleDeleteProduct();             break;
+                    case 7:  handleRestockProduct();            break;
+                    case 8:  handleLowStockReport();            break;
+                    case 9:  handlePlaceOrder();                break;
+                    case 10: handleProcessNextOrder();          break;
+                    case 11: orderService.viewPendingOrders();  break;
+                    case 12: handleViewOrderHistory();          break;
+                    case 13: handlePriceRangeSearch();          break;
+                    case 0:
+                        System.out.println("\n  StockFlow shut down. Goodbye.");
+                        return;
+                    default:
+                        System.out.println("  Invalid choice. Try again.");
+                }
+            } catch (NoSuchElementException e) {
+                System.out.println("\n  Console input ended. Goodbye.");
+                return;
+            } catch (TransactionExecutionException e) {
+                System.out.println("  Database operation failed: " + e.getMessage());
+            } catch (IllegalArgumentException e) {
+                System.out.println("  Invalid value: " + e.getMessage());
             }
         }
     }
 
     private void printMenu() {
-        System.out.println("\n╔══════════════════════════════╗");
-        System.out.println("║       S T O C K F L O W      ║");
-        System.out.println("╠══════════════════════════════╣");
-        System.out.println("║  INVENTORY                   ║");
-        System.out.println("║   1. Add Product             ║");
-        System.out.println("║   2. View Inventory          ║");
-        System.out.println("║   3. Search by ID            ║");
-        System.out.println("║   4. Search by Name          ║");
-        System.out.println("║   5. Update Product          ║");
-        System.out.println("║   6. Delete Product          ║");
-        System.out.println("║   7. Restock Product         ║");
-        System.out.println("║   8. Low Stock Report        ║");
-        System.out.println("╠══════════════════════════════╣");
-        System.out.println("║  ORDERS                      ║");
-        System.out.println("║   9. Place Normal Order      ║");
-        System.out.println("║  10. Place VIP Order         ║");
-        System.out.println("║  11. Process Next Order      ║");
-        System.out.println("║  12. View Pending Orders     ║");
-        System.out.println("║  13. View Order History      ║");
-        System.out.println("╠══════════════════════════════╣");
-        System.out.println("║  OTHERS                      ║");
-        System.out.println("║  14. Price Range Filter      ║");
-        System.out.println("║  15. Undo Last Action        ║");
-        System.out.println("╠══════════════════════════════╣");
-        System.out.println("║   0. Exit                    ║");
-        System.out.println("╚══════════════════════════════╝");
+        System.out.println("\n+------------------------------+");
+        System.out.println("|       S T O C K F L O W      |");
+        System.out.println("+------------------------------+");
+        System.out.println("| INVENTORY                    |");
+        System.out.println("|  1. Add Product              |");
+        System.out.println("|  2. View Inventory           |");
+        System.out.println("|  3. Search by ID             |");
+        System.out.println("|  4. Search by Name           |");
+        System.out.println("|  5. Update Product           |");
+        System.out.println("|  6. Delete Product           |");
+        System.out.println("|  7. Restock Product          |");
+        System.out.println("|  8. Low Stock Report         |");
+        System.out.println("+------------------------------+");
+        System.out.println("| ORDERS                       |");
+        System.out.println("|  9. Place Order              |");
+        System.out.println("| 10. Process Next Order       |");
+        System.out.println("| 11. View Pending Orders      |");
+        System.out.println("| 12. View Order History       |");
+        System.out.println("+------------------------------+");
+        System.out.println("| OTHER                        |");
+        System.out.println("| 13. Price Range Filter       |");
+        System.out.println("+------------------------------+");
+        System.out.println("|  0. Exit                     |");
+        System.out.println("+------------------------------+");
     }
-
     // ─── Inventory Handlers ─────────────────────────────────────────────────────
 
     private void handleAddProduct() {
@@ -158,8 +167,8 @@ public class Menu {
         String name         = readString("  Name: ");
         String category     = readString("  Category: ");
         double price        = readPositiveDouble("  Price: ");
-        int    stock        = readInt("  Initial Stock: ");
-        int    minimumStock = readPositiveInt("  Minimum Stock Alert Level: ");
+        int    stock        = readNonNegativeInt("  Initial Stock: ");
+        int    minimumStock = readNonNegativeInt("  Minimum Stock Alert Level: ");
 
         Product product = new Product(0, name, category, price, stock, minimumStock);
         try {
@@ -216,22 +225,30 @@ public class Menu {
         System.out.println("  Current: " + existing);
         System.out.println("  (Press Enter to keep existing value)");
 
-        String name     = readString("  New Name [" + existing.getProductName() + "]: ");
-        String category = readString("  New Category [" + existing.getCategory() + "]: ");
+        String nameInput = readLine("  New Name [" + existing.getProductName() + "]: ").trim();
+        String name = nameInput.isEmpty() ? existing.getProductName() : nameInput;
+        String categoryInput = readLine("  New Category [" + existing.getCategory() + "]: ").trim();
+        String category = categoryInput.isEmpty() ? existing.getCategory() : categoryInput;
 
         double price = existing.getPrice();
-        System.out.print("  New Price [" + existing.getPrice() + "]: ");
-        String priceInput = sc.nextLine().trim();
+        String priceInput = readLine("  New Price [" + existing.getPrice() + "]: ").trim();
         if (!priceInput.isEmpty()) {
-            try { price = Double.parseDouble(priceInput); }
+            try {
+                double parsed = Double.parseDouble(priceInput);
+                if (Double.isFinite(parsed) && parsed > 0) price = parsed;
+                else System.out.println("  Invalid price, keeping existing.");
+            }
             catch (NumberFormatException e) { System.out.println("  Invalid price, keeping existing."); }
         }
 
         int minStock = existing.getMinimumStock();
-        System.out.print("  New Min Stock [" + existing.getMinimumStock() + "]: ");
-        String minInput = sc.nextLine().trim();
+        String minInput = readLine("  New Min Stock [" + existing.getMinimumStock() + "]: ").trim();
         if (!minInput.isEmpty()) {
-            try { minStock = Integer.parseInt(minInput); }
+            try {
+                int parsed = Integer.parseInt(minInput);
+                if (parsed >= 0) minStock = parsed;
+                else System.out.println("  Invalid value, keeping existing.");
+            }
             catch (NumberFormatException e) { System.out.println("  Invalid value, keeping existing."); }
         }
 
@@ -249,7 +266,7 @@ public class Menu {
     private void handleDeleteProduct() {
         int id = readInt("  Product ID to delete: ");
         System.out.print("  Confirm delete product #" + id + "? (yes/no): ");
-        String confirm = sc.nextLine().trim();
+        String confirm = readLine("").trim();
         if (!confirm.equalsIgnoreCase("yes")) {
             System.out.println("  Delete cancelled.");
             return;
@@ -290,16 +307,15 @@ public class Menu {
 
     // ─── Order Handlers ─────────────────────────────────────────────────────────
 
-    private void handlePlaceOrder(int priority) {
-        String type    = (priority == 1) ? "VIP" : "Normal";
-        System.out.println("\n  -- Place " + type + " Order --");
+    private void handlePlaceOrder() {
+        System.out.println("\n  -- Place Order --");
         String name    = readString("  Customer Name: ");
         int productId  = readInt("  Product ID: ");
         int quantity   = readPositiveInt("  Quantity: ");
 
         try {
-            orderService.placeOrder(name, productId, quantity, priority);
-            System.out.println("  Order queued as " + type + " for " + name + ".");
+            orderService.placeOrder(name, productId, quantity);
+            System.out.println("  Order queued for " + name + ".");
         } catch (ProductNotFoundException e) {
             System.out.println("  Cannot place order — " + e.getMessage());
         } catch (InsufficientStockException e) {
@@ -318,7 +334,7 @@ public class Menu {
         } catch (ProductNotFoundException e) {
             System.out.println("  Order cancelled — " + e.getMessage());
         } catch (TransactionExecutionException e) {
-            System.out.println("  Order processing failed (transaction rolled back): " + e.getMessage());
+            System.out.println("  Order processing failed: " + e.getMessage());
         }
     }
 
@@ -329,12 +345,11 @@ public class Menu {
             return;
         }
         System.out.println("\n  -- Order History (Latest First) --");
-        System.out.printf("  %-8s %-18s %-10s %-6s %-8s%n", "OrderID", "Customer", "ProductID", "Qty", "Type");
-        System.out.println("  " + "-".repeat(56));
+        System.out.printf("  %-38s %-18s %-10s %-6s%n", "OrderID", "Customer", "ProductID", "Qty");
+        System.out.println("  " + "-".repeat(76));
         for (Order o : history) {
-            String type = (o.getPriority() == 1) ? "VIP" : "Normal";
-            System.out.printf("  %-8d %-18s %-10d %-6d %-8s%n",
-                o.getOrderId(), o.getCustomerName(), o.getProductId(), o.getQuantity(), type);
+            System.out.printf("  %-38s %-18s %-10d %-6d%n",
+                o.getOrderId(), o.getCustomerName(), o.getProductId(), o.getQuantity());
         }
     }
 
@@ -356,11 +371,6 @@ public class Menu {
             + " (" + results.size() + " product(s), sorted by price) --");
         printProductTableHeader();
         for (Product p : results) printProductRow(p);
-    }
-
-    private void handleUndoLastAction() {
-        System.out.println("\n  -- Undo Last Action --");
-        orderService.undoLastAction();
     }
 
     // ─── Table Formatting ───────────────────────────────────────────────────────

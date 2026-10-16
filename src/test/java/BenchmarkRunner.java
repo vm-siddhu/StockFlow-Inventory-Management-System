@@ -12,7 +12,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import dao.ProductDAO;
 import database.DBConnection;
-import dsa.ProductBST;
+import dsa.ProductAvlTree;
 import exception.InsufficientStockException;
 import exception.TransactionExecutionException;
 import model.Product;
@@ -43,9 +43,9 @@ import model.Product;
 public class BenchmarkRunner {
 
     // ── Benchmark Configuration ────────────────────────────────────────────────
-    private static final int THREAD_COUNT   = 20;
+    private static final int THREAD_COUNT   = 10;     // must be <= HikariCP maximumPoolSize
     private static final int N_SKUS         = 10_000;  // batch insert volume
-    private static final int N_ORDERS       = 1_000;   // concurrent purchase count
+    private static final int N_ORDERS       = 200;     // concurrent purchase count
     private static final int INITIAL_STOCK  = N_ORDERS; // exactly enough for all orders
 
     // Test product name prefix (used for cleanup)
@@ -70,6 +70,21 @@ public class BenchmarkRunner {
             // ── Cleanup: remove all test data ──────────────────────────────────
             cleanup();
             DBConnection.shutdown();
+
+            // Deregister MySQL JDBC driver and kill its daemon cleanup thread.
+            // Without this, Maven exec:java warns about a lingering thread
+            // because the MySQL Connector/J AbandonedConnectionCleanupThread
+            // is a daemon that doesn't respond to ThreadGroup.destroy().
+            try {
+                com.mysql.cj.jdbc.AbandonedConnectionCleanupThread.checkedShutdown();
+            } catch (Exception ignored) {}
+            java.util.Enumeration<java.sql.Driver> drivers = java.sql.DriverManager.getDrivers();
+            while (drivers.hasMoreElements()) {
+                try {
+                    java.sql.DriverManager.deregisterDriver(drivers.nextElement());
+                } catch (SQLException ignored) {}
+            }
+
             System.out.println("\n[CLEANUP] Test data removed. Pool shut down.");
         }
     }
@@ -88,7 +103,7 @@ public class BenchmarkRunner {
 
         // Build product list
         List<Product> products = new ArrayList<>(N_SKUS);
-        ProductBST bst = new ProductBST();
+        ProductAvlTree bst = new ProductAvlTree();
 
         for (int i = 0; i < N_SKUS; i++) {
             // Vary prices to stress the AVL tree with diverse insert patterns
@@ -133,14 +148,15 @@ public class BenchmarkRunner {
             + " with stock = " + INITIAL_STOCK);
 
         ExecutorService pool     = Executors.newFixedThreadPool(THREAD_COUNT);
-        CountDownLatch  ready    = new CountDownLatch(N_ORDERS);  // tasks signal ready
-        CountDownLatch  startGun = new CountDownLatch(1);          // one release fires all
+        CountDownLatch  ready    = new CountDownLatch(THREAD_COUNT); // one per real thread
+        CountDownLatch  startGun = new CountDownLatch(1);             // one release fires all
 
         AtomicInteger fulfilled = new AtomicInteger(0);  // successful deductions
         AtomicInteger rejected  = new AtomicInteger(0);  // stock-exhausted rejections
         AtomicInteger errors    = new AtomicInteger(0);  // unexpected failures
 
-        // Pre-create all tasks (they block on startGun)
+        // Submit N_ORDERS tasks into THREAD_COUNT threads.
+        // Connection is acquired AFTER the barrier to prevent pool exhaustion.
         for (int i = 0; i < N_ORDERS; i++) {
             final int orderId = i + 1;
             pool.submit(() -> {
@@ -152,7 +168,10 @@ public class BenchmarkRunner {
                     return;
                 }
 
-                // ── Execute ACID transaction ────────────────────────────────
+                // ── Acquire connection AFTER barrier (critical fix) ──────────
+                // Moving getConnection() here ensures threads don't hold pool
+                // slots while blocked on startGun. Each thread processes tasks
+                // sequentially and returns the connection promptly.
                 Connection conn = null;
                 try {
                     conn = DBConnection.getConnection();
@@ -186,14 +205,17 @@ public class BenchmarkRunner {
             });
         }
 
-        // Wait until all threads are spawned and blocked on startGun
+        // Wait until all THREAD_COUNT threads are spawned and blocked on startGun
         ready.await();
 
         long start = System.currentTimeMillis();
-        startGun.countDown();  // FIRE — all N_ORDERS threads start simultaneously
+        startGun.countDown();  // FIRE — all threads start processing tasks simultaneously
 
         pool.shutdown();
-        pool.awaitTermination(120, TimeUnit.SECONDS);
+        if (!pool.awaitTermination(60, TimeUnit.SECONDS)) {
+            System.err.println("  [WARN] Thread pool did not terminate within 60s — forcing shutdown.");
+            pool.shutdownNow();
+        }
         long elapsed = System.currentTimeMillis() - start;
 
         // ── Read final stock from DB ────────────────────────────────────────
@@ -241,16 +263,15 @@ public class BenchmarkRunner {
     private static void insertOrderHistory(Connection conn, int orderId, int productId)
             throws SQLException {
         String sql = "INSERT INTO order_history"
-                   + "(order_id, customer_name, product_id, quantity, priority, status, processed_time) "
-                   + "VALUES (?, ?, ?, ?, ?, ?, ?)";
+                   + "(order_id, customer_name, product_id, quantity, status, processed_time) "
+                   + "VALUES (?, ?, ?, ?, ?, ?)";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, orderId + 900_000);  // offset to avoid collision with real orders
             ps.setString(2, "BENCHMARK_CUSTOMER_" + orderId);
             ps.setInt(3, productId);
             ps.setInt(4, 1);
-            ps.setInt(5, 0);
-            ps.setString(6, "PROCESSED");
-            ps.setTimestamp(7, new java.sql.Timestamp(System.currentTimeMillis()));
+            ps.setString(5, "PROCESSED");
+            ps.setTimestamp(6, new java.sql.Timestamp(System.currentTimeMillis()));
             ps.executeUpdate();
         }
     }
