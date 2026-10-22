@@ -36,9 +36,8 @@ import model.Product;
  *   ASSERTION: fulfilled_count + final_stock == initial_stock
  *   If this holds → 0% overselling, 0% data drift under race conditions.
  *
- * Run:
- *   javac -cp "lib/*;src" src/test/BenchmarkRunner.java
- *   java  -cp "lib/*;src" test.BenchmarkRunner
+ * Run from the repository root:
+ *   mvn -Dexec.mainClass=BenchmarkRunner -Dexec.classpathScope=test exec:java
  */
 public class BenchmarkRunner {
 
@@ -140,7 +139,8 @@ public class BenchmarkRunner {
      * ASSERTION: fulfilled + final_stock == INITIAL_STOCK
      */
     private static void runPhase2ConcurrentOrders(ProductDAO productDAO) throws InterruptedException {
-        System.out.println("── PHASE 2: Concurrent Purchase Transactions (" + N_ORDERS + " threads) ───");
+        System.out.println("── PHASE 2: Concurrent Purchase Transactions (" + N_ORDERS
+            + " orders, " + THREAD_COUNT + " threads) ───");
 
         // Seed a single high-demand product with exactly INITIAL_STOCK units
         int benchProductId = seedBenchmarkProduct(INITIAL_STOCK);

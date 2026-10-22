@@ -1,0 +1,49 @@
+[INFO] Scanning for projects...
+[INFO]
+[INFO] ----------------------< com.stockflow:stockflow >-----------------------
+[INFO] Building StockFlow Inventory Management System 1.0-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO]
+[INFO] --- exec:3.2.0:java (default-cli) @ stockflow ---
+????????????????????????????????????????????????????
+?     StockFlow Concurrent Benchmark Harness       ?
+????????????????????????????????????????????????????
+
+?? PHASE 1: Batch SKU Insert (10000 products) ??????????????
+[BenchmarkRunner.main()] INFO com.zaxxer.hikari.HikariDataSource - StockFlow - Starting...
+[BenchmarkRunner.main()] INFO com.zaxxer.hikari.pool.HikariPool - StockFlow - Added connection com.mysql.cj.jdbc.ConnectionImpl@3e008692
+[BenchmarkRunner.main()] INFO com.zaxxer.hikari.HikariDataSource - StockFlow - Start completed.
+  Inserted  : 10,000 SKUs
+  Time      : 3946 ms
+  Throughput: 2534 inserts/sec
+  AVL Range [50-200]: 152 products found (O(k+log n))
+
+?? PHASE 2: Concurrent Purchase Transactions (200 orders, 10 threads) ???
+  Seeded product #10001 with stock = 200
+  Threads       : 10
+  Total tasks   : 200
+  Fulfilled     : 200
+  Rejected      : 0 (stock exhausted — correct)
+  Errors        : 0
+  Initial stock : 200
+  Final stock   : 0
+  Time          : 950 ms
+  Throughput    : 211 TPS
+  Avg latency   : 4.75 ms/txn
+
+  ? [PASS] ZERO OVERSELL: fulfilled(200) + finalStock(0) == initialStock(200)
+  ? [PASS] ZERO transaction errors under 200 concurrent requests.
+[CLEANUP] order_history — 200 rows removed.
+[CLEANUP] products — 10000 rows removed.
+[CLEANUP] products — 1 rows removed.
+[BenchmarkRunner.main()] INFO com.zaxxer.hikari.HikariDataSource - StockFlow - Shutdown initiated...
+[BenchmarkRunner.main()] INFO com.zaxxer.hikari.HikariDataSource - StockFlow - Shutdown completed.
+
+[CLEANUP] Test data removed. Pool shut down.
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  6.406 s
+[INFO] Finished at: 2026-10-22T12:28:53+05:30
+[INFO] ------------------------------------------------------------------------

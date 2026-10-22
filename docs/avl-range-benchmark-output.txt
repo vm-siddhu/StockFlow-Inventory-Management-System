@@ -1,0 +1,4 @@
+Java 23.0.1 | cores 16
+N=  1,000 | avg results/query=  10.4 | AVL      0.57 us/query | linear scan     13.87 us/query | speedup   24.5x | build    0.5 ms | results verified on 200 queries
+N= 10,000 | avg results/query= 100.1 | AVL      7.73 us/query | linear scan    180.53 us/query | speedup   23.4x | build    6.2 ms | results verified on 200 queries
+N=100,000 | avg results/query=1000.7 | AVL     33.22 us/query | linear scan   1908.13 us/query | speedup   57.4x | build  149.6 ms | results verified on 200 queries
